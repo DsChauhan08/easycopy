@@ -140,8 +140,7 @@ jobs:
             --description "Flatten a GitHub repo into a single static HTML page" \
             --url "https://github.com/${{ github.repository }}" \
             --license "BSD-Zero-Clause" \
-            --prefix=/usr/bin \
-            "$BIN"
+            "$BIN=/usr/bin/${{ env.PACKAGE_NAME }}"
           mkdir -p packages
           mv *.rpm packages/
           ls -lh packages/*.rpm

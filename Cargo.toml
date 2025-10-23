@@ -46,6 +46,21 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+
+# Metadata for cargo-deb
+[package.metadata.deb]
+maintainer = "Dhananjay Singh <dhananjay@example.com>"
+copyright = "2025, Dhananjay Singh"
+license-file = ["LICENSE", "4"]
+extended-description = """\
+A Rust implementation of rendergit that works on Windows, Linux, and Android (Termux).
+Flatten any GitHub repository into a single, static HTML page with syntax highlighting,
+markdown rendering, and a clean sidebar navigation."""
+depends = "$auto"
+section = "utility"
+priority = "optional"
 assets = [
-  ["target/release/easycopy","usr/bin/easycopy"]
+  ["target/release/easycopy", "usr/bin/", "755"],
+  ["README.md", "usr/share/doc/easycopy/", "644"],
+  ["LICENSE", "usr/share/doc/easycopy/", "644"],
 ]

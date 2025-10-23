@@ -1,10 +1,10 @@
 name: Build & Release
 
-# === TRIGGER: static tag v1-alpha ===
+# Trigger on version tags (v1.0.0, v1.0.0-alpha, etc.)
 on:
   push:
     tags:
-      - 'v1-alpha'   # <--- static tag. push this tag to create a release
+      - 'v*'
 
 env:
   PACKAGE_NAME: easycopy
@@ -19,8 +19,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Rust (toolchain from rust-toolchain file if present)
-        uses: dtolnay/rust-toolchain-action@stable
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cross-compilation dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc-aarch64-linux-gnu
 
       - name: Add target
         run: rustup target add ${{ matrix.target }}
@@ -28,24 +33,20 @@ jobs:
       - name: Build release
         run: cargo build --release --target ${{ matrix.target }}
 
-      - name: Package tar.gz
+      - name: Package tar.xz
         run: |
           mkdir -p dist
-          # copy binary (try arch-specific then fallback)
-          if [ -f target/${{ matrix.target }}/release/${{ env.PACKAGE_NAME }} ]; then
-            cp target/${{ matrix.target }}/release/${{ env.PACKAGE_NAME }} dist/
-          else
-            cp target/release/${{ env.PACKAGE_NAME }} dist/ || true
-          fi
-          TARFILE=${{ env.PACKAGE_NAME }}-${{ matrix.target }}-${{ github.ref_name }}.tar.gz
-          tar -C dist -czvf "$TARFILE" -C dist ${{ env.PACKAGE_NAME }}
+          cp target/${{ matrix.target }}/release/${{ env.PACKAGE_NAME }} dist/
+          chmod +x dist/${{ env.PACKAGE_NAME }}
+          TARFILE=${{ env.PACKAGE_NAME }}-${{ matrix.target }}-${{ github.ref_name }}.tar.xz
+          tar -C dist -cJf "$TARFILE" ${{ env.PACKAGE_NAME }}
           ls -lh "$TARFILE"
 
       - name: Upload Linux artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.PACKAGE_NAME }}-${{ matrix.target }}-${{ github.ref_name }}.tar.gz
-          path: ${{ env.PACKAGE_NAME }}-${{ matrix.target }}-${{ github.ref_name }}.tar.gz
+          name: ${{ env.PACKAGE_NAME }}-${{ matrix.target }}
+          path: ${{ env.PACKAGE_NAME }}-${{ matrix.target }}-${{ github.ref_name }}.tar.xz
 
   build-windows:
     name: Build Windows
@@ -53,17 +54,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
-        uses: dtolnay/rust-toolchain-action@stable
+        uses: dtolnay/rust-toolchain@stable
       - name: Build
         run: cargo build --release
-      - name: Zip exe
-        run: powershell -Command "Compress-Archive -Path target\\release\\${{ env.PACKAGE_NAME }}.exe -DestinationPath $env:PACKAGE_NAME-windows-${{ github.ref_name }}.zip"
+      - name: Package exe
+        run: |
+          mkdir -p dist
+          cp target/release/${{ env.PACKAGE_NAME }}.exe dist/
+          Compress-Archive -Path dist/${{ env.PACKAGE_NAME }}.exe -DestinationPath ${{ env.PACKAGE_NAME }}-x86_64-pc-windows-msvc-${{ github.ref_name }}.zip
         shell: powershell
       - name: Upload Windows artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.PACKAGE_NAME }}-windows-${{ github.ref_name }}.zip
-          path: ${{ env.PACKAGE_NAME }}-windows-${{ github.ref_name }}.zip
+          name: ${{ env.PACKAGE_NAME }}-windows
+          path: ${{ env.PACKAGE_NAME }}-x86_64-pc-windows-msvc-${{ github.ref_name }}.zip
 
   build-macos:
     name: Build macOS
@@ -71,19 +75,20 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Rust
-        uses: dtolnay/rust-toolchain-action@stable
+        uses: dtolnay/rust-toolchain@stable
       - name: Build
         run: cargo build --release
-      - name: Tar macOS binary
+      - name: Package macOS binary
         run: |
           mkdir -p dist
           cp target/release/${{ env.PACKAGE_NAME }} dist/
-          tar -C dist -czvf ${{ env.PACKAGE_NAME }}-macos-${{ github.ref_name }}.tar.gz -C dist ${{ env.PACKAGE_NAME }}
+          chmod +x dist/${{ env.PACKAGE_NAME }}
+          tar -C dist -cJf ${{ env.PACKAGE_NAME }}-x86_64-apple-darwin-${{ github.ref_name }}.tar.xz ${{ env.PACKAGE_NAME }}
       - name: Upload macOS artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.PACKAGE_NAME }}-macos-${{ github.ref_name }}.tar.gz
-          path: ${{ env.PACKAGE_NAME }}-macos-${{ github.ref_name }}.tar.gz
+          name: ${{ env.PACKAGE_NAME }}-macos
+          path: ${{ env.PACKAGE_NAME }}-x86_64-apple-darwin-${{ github.ref_name }}.tar.xz
 
   publish:
     name: Create Release & Upload Packages
@@ -97,21 +102,26 @@ jobs:
         with:
           path: artifacts
 
-      - name: Install Rust (for cargo-deb packaging)
-        uses: dtolnay/rust-toolchain-action@stable
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
 
-      - name: Build release (native)
+      - name: Build release (native x86_64)
         run: cargo build --release
 
-      - name: Install cargo-deb
-        run: cargo install cargo-deb || true
-
-      - name: Create .deb using cargo-deb
+      - name: Create source tarball
         run: |
-          cargo deb --no-build
-          mkdir -p out
-          mv target/debian/*.deb out/ || true
-          ls -lh out || true
+          git archive --format=tar.xz --prefix=${{ env.PACKAGE_NAME }}-${{ github.ref_name }}/ HEAD > ${{ env.PACKAGE_NAME }}-${{ github.ref_name }}-source.tar.xz
+          ls -lh ${{ env.PACKAGE_NAME }}-${{ github.ref_name }}-source.tar.xz
+
+      - name: Install cargo-deb
+        run: cargo install cargo-deb
+
+      - name: Create .deb package
+        run: |
+          cargo deb --no-build --no-strip
+          mkdir -p packages
+          cp target/debian/*.deb packages/
+          ls -lh packages/*.deb
 
       - name: Install fpm (for .rpm)
         run: |
@@ -119,20 +129,41 @@ jobs:
           sudo apt-get install -y ruby ruby-dev build-essential
           sudo gem install --no-document fpm
 
-      - name: Create .rpm with fpm
+      - name: Create .rpm package with fpm
         run: |
+          VERSION="$(echo ${{ github.ref_name }} | sed 's/^v//')"
           BIN=target/release/${{ env.PACKAGE_NAME }}
           test -f "$BIN" || { echo "$BIN not found"; exit 1; }
-          fpm -s dir -t rpm -n ${{ env.PACKAGE_NAME }} -v "${{ github.ref_name }}" --prefix=/usr/bin "$BIN"
-          mkdir -p out
-          mv *.rpm out/ || true
-          ls -lh out || true
+          fpm -s dir -t rpm \
+            -n ${{ env.PACKAGE_NAME }} \
+            -v "$VERSION" \
+            --description "Flatten a GitHub repo into a single static HTML page" \
+            --url "https://github.com/${{ github.repository }}" \
+            --license "BSD-Zero-Clause" \
+            --prefix=/usr/bin \
+            "$BIN"
+          mkdir -p packages
+          mv *.rpm packages/
+          ls -lh packages/*.rpm
 
-      - name: Create GitHub Release and upload assets
+      - name: Organize release files
+        run: |
+          mkdir -p release
+          # Copy all artifacts
+          find artifacts -type f \( -name "*.tar.xz" -o -name "*.zip" \) -exec cp {} release/ \;
+          # Copy packages
+          cp packages/*.deb release/ 2>/dev/null || true
+          cp packages/*.rpm release/ 2>/dev/null || true
+          # Copy source
+          cp ${{ env.PACKAGE_NAME }}-${{ github.ref_name }}-source.tar.xz release/
+          ls -lh release/
+
+      - name: Create GitHub Release
         uses: ncipollo/release-action@v1
         with:
           tag: ${{ github.ref_name }}
-          name: ${{ github.ref_name }}
-          files: |
-            artifacts/**
-            out/**
+          name: Release ${{ github.ref_name }}
+          draft: false
+          prerelease: ${{ contains(github.ref_name, 'alpha') || contains(github.ref_name, 'beta') || contains(github.ref_name, 'rc') }}
+          generateReleaseNotes: true
+          files: release/*

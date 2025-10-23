@@ -107,7 +107,7 @@ jobs:
 
       - name: Create source tarball
         run: |
-          git archive --format=tar.xz --prefix=${{ env.PACKAGE_NAME }}-${{ github.ref_name }}/ HEAD > ${{ env.PACKAGE_NAME }}-${{ github.ref_name }}-source.tar.xz
+          git archive --format=tar --prefix=${{ env.PACKAGE_NAME }}-${{ github.ref_name }}/ HEAD | xz -9 > ${{ env.PACKAGE_NAME }}-${{ github.ref_name }}-source.tar.xz
           ls -lh ${{ env.PACKAGE_NAME }}-${{ github.ref_name }}-source.tar.xz
 
       - name: Install cargo-deb

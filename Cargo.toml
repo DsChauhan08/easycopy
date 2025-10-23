@@ -2,7 +2,7 @@
 name = "easycopy"
 version = "0.1.0"
 edition = "2021"
-authors = ["Your Name"]
+authors = ["Dhananjay Singh"]
 description = "Flatten a GitHub repo into a single static HTML page for fast skimming and search"
 license = "BSD-Zero-Clause"
 
@@ -46,3 +46,6 @@ opt-level = 3
 lto = true
 codegen-units = 1
 strip = true
+assets = [
+  ["target/release/easycopy","usr/bin/easycopy"]
+]

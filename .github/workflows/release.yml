@@ -27,21 +27,6 @@ jobs:
       - name: Build release (vendored OpenSSL)
         run: cargo build --release
 
-      - name: Package tar.xz
-        run: |
-          mkdir -p dist
-          cp target/release/${{ env.PACKAGE_NAME }} dist/
-          chmod +x dist/${{ env.PACKAGE_NAME }}
-          TARFILE=${{ env.PACKAGE_NAME }}-x86_64-unknown-linux-gnu-${{ github.ref_name }}.tar.xz
-          tar -C dist -cJf "$TARFILE" ${{ env.PACKAGE_NAME }}
-          ls -lh "$TARFILE"
-
-      - name: Upload Linux artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.PACKAGE_NAME }}-linux
-          path: ${{ env.PACKAGE_NAME }}-x86_64-unknown-linux-gnu-${{ github.ref_name }}.tar.xz
-
   build-windows:
     name: Build Windows
     runs-on: windows-latest
@@ -72,21 +57,10 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Build (vendored OpenSSL)
         run: cargo build --release
-      - name: Package macOS binary
-        run: |
-          mkdir -p dist
-          cp target/release/${{ env.PACKAGE_NAME }} dist/
-          chmod +x dist/${{ env.PACKAGE_NAME }}
-          tar -C dist -cJf ${{ env.PACKAGE_NAME }}-x86_64-apple-darwin-${{ github.ref_name }}.tar.xz ${{ env.PACKAGE_NAME }}
-      - name: Upload macOS artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.PACKAGE_NAME }}-macos
-          path: ${{ env.PACKAGE_NAME }}-x86_64-apple-darwin-${{ github.ref_name }}.tar.xz
 
   publish:
     name: Create Release & Upload Packages
-    needs: [build-linux, build-windows, build-macos]
+    needs: [build-windows]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -107,11 +81,6 @@ jobs:
 
       - name: Build release (native x86_64)
         run: cargo build --release
-
-      - name: Create source tarball
-        run: |
-          git archive --format=tar --prefix=${{ env.PACKAGE_NAME }}-${{ github.ref_name }}/ HEAD | xz -9 > ${{ env.PACKAGE_NAME }}-${{ github.ref_name }}-source.tar.xz
-          ls -lh ${{ env.PACKAGE_NAME }}-${{ github.ref_name }}-source.tar.xz
 
       - name: Install cargo-deb
         run: cargo install cargo-deb
@@ -148,13 +117,11 @@ jobs:
       - name: Organize release files
         run: |
           mkdir -p release
-          # Copy all artifacts
-          find artifacts -type f \( -name "*.tar.xz" -o -name "*.zip" \) -exec cp {} release/ \;
+          # Copy Windows zip
+          find artifacts -type f -name "*.zip" -exec cp {} release/ \;
           # Copy packages
           cp packages/*.deb release/ 2>/dev/null || true
           cp packages/*.rpm release/ 2>/dev/null || true
-          # Copy source
-          cp ${{ env.PACKAGE_NAME }}-${{ github.ref_name }}-source.tar.xz release/
           ls -lh release/
 
       - name: Create GitHub Release

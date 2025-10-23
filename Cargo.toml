@@ -8,7 +8,7 @@ license = "BSD-Zero-Clause"
 
 [dependencies]
 # Git operations
-git2 = "0.19"
+git2 = { version = "0.19", features = ["vendored-openssl"] }
 
 # Command line parsing
 clap = { version = "4.5", features = ["derive"] }

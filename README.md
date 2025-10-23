@@ -61,7 +61,7 @@ This installs `easycopy` to your cargo bin directory (usually `~/.cargo/bin`), w
 ### Basic usage
 
 ```bash
-easycopy https://github.com/username/repository
+easycopy https://github.com/username/easycopy
 ```
 
 This will:
@@ -73,13 +73,13 @@ This will:
 
 ```bash
 # Specify output location
-easycopy https://github.com/username/repository -o output.html
+easycopy https://github.com/username/easycopy -o output.html
 
 # Don't open in browser
-easycopy https://github.com/username/repository --no-open
+easycopy https://github.com/username/easycopy --no-open
 
 # Set maximum file size (in bytes) to render
-easycopy https://github.com/username/repository --max-bytes 100000
+easycopy https://github.com/username/easycopy --max-bytes 100000
 
 # View help
 easycopy --help
@@ -135,12 +135,12 @@ cd easycopy
 cargo build --release
 
 # Run
-./target/release/easycopy https://github.com/username/repository
+./target/release/easycopy https://github.com/username/easycopy
 ```
 
 **Note:** The `--no-open` flag is recommended in Termux since browser integration is limited:
 ```bash
-easycopy https://github.com/username/repository --no-open
+easycopy https://github.com/username/easycopy --no-open
 ```
 
 Then open the generated HTML file with:
@@ -174,7 +174,7 @@ cargo test
 ### Run with debug output
 
 ```bash
-cargo run -- https://github.com/username/repository
+cargo run -- https://github.com/username/easycopy
 ```
 
 ### Build optimized release

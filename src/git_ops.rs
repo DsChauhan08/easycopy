@@ -1,11 +1,67 @@
 use anyhow::{Context, Result};
-use git2::Repository;
+use git2::{Repository, build::RepoBuilder};
 use std::path::Path;
 
-/// Clone a repository to the specified destination
-pub fn clone_repo(url: &str, dest: &Path) -> Result<()> {
-    Repository::clone(url, dest)
-        .context("Failed to clone repository")?;
+#[derive(Debug, Clone)]
+pub enum GitRef {
+    Branch(String),
+    Tag(String),
+    Commit(String),
+    Default,
+}
+
+/// Clone a repository to the specified destination with optional ref specification
+pub fn clone_repo(url: &str, dest: &Path, git_ref: &GitRef) -> Result<()> {
+    match git_ref {
+        GitRef::Default => {
+            // Simple clone
+            Repository::clone(url, dest)
+                .context("Failed to clone repository")?;
+        }
+        GitRef::Branch(branch) => {
+            // Clone specific branch
+            let mut builder = RepoBuilder::new();
+            builder.branch(branch);
+            builder.clone(url, dest)
+                .with_context(|| format!("Failed to clone repository with branch '{}'", branch))?;
+        }
+        GitRef::Tag(tag) => {
+            // For tags, we need to clone then checkout
+            let repo = Repository::clone(url, dest)
+                .context("Failed to clone repository")?;
+            
+            let reference = format!("refs/tags/{}", tag);
+            
+            // Find and checkout the specific reference
+            let (object, reference_obj) = repo.revparse_ext(&reference)
+                .with_context(|| format!("Failed to find tag '{}'", tag))?;
+            
+            repo.checkout_tree(&object, None)
+                .context("Failed to checkout tree")?;
+            
+            match reference_obj {
+                Some(gref) => repo.set_head(gref.name().unwrap()),
+                None => repo.set_head_detached(object.id()),
+            }.context("Failed to set HEAD")?;
+        }
+        GitRef::Commit(commit_hash) => {
+            // For commits, clone then checkout
+            let repo = Repository::clone(url, dest)
+                .context("Failed to clone repository")?;
+            
+            // Find and checkout the specific commit
+            let (object, reference_obj) = repo.revparse_ext(commit_hash)
+                .with_context(|| format!("Failed to find commit '{}'", commit_hash))?;
+            
+            repo.checkout_tree(&object, None)
+                .context("Failed to checkout tree")?;
+            
+            match reference_obj {
+                Some(gref) => repo.set_head(gref.name().unwrap()),
+                None => repo.set_head_detached(object.id()),
+            }.context("Failed to set HEAD")?;
+        }
+    }
     Ok(())
 }
 

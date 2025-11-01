@@ -7,6 +7,9 @@ A Rust implementation of [rendergit](https://github.com/karpathy/rendergit) that
 ## Features
 
 - **Cross-platform**: Works on Windows, Linux, and Android (Termux)
+- **Local & Remote**: Analyze GitHub repos or local directories
+- **Git flexibility**: Clone specific branches, tags, or commits
+- **Progress indicators**: Visual feedback for large repositories
 - **Dual view modes** - toggle between Human and LLM views
   - **👤 Human View**: Pretty interface with syntax highlighting and navigation
   - **🤖 LLM View**: Raw CXML text format - perfect for copying to Claude/ChatGPT for code analysis
@@ -61,11 +64,16 @@ This installs `easycopy` to your cargo bin directory (usually `~/.cargo/bin`), w
 ### Basic usage
 
 ```bash
+# Analyze a GitHub repository
 easycopy https://github.com/username/easycopy
+
+# Analyze a local directory
+easycopy /path/to/local/project
+easycopy .  # Current directory
 ```
 
 This will:
-1. Clone the repo to a temporary directory
+1. Clone the repo (or use local directory)
 2. Render its source code into a single static HTML file
 3. Automatically open the file in your browser
 
@@ -80,6 +88,18 @@ easycopy https://github.com/username/easycopy --no-open
 
 # Set maximum file size (in bytes) to render
 easycopy https://github.com/username/easycopy --max-bytes 100000
+
+# Clone specific branch
+easycopy https://github.com/username/easycopy --branch develop
+
+# Clone specific tag
+easycopy https://github.com/username/easycopy --tag v2.0.0
+
+# Clone specific commit
+easycopy https://github.com/username/easycopy --commit abc123def
+
+# Disable progress indicators (useful for CI/automation)
+easycopy https://github.com/username/easycopy --no-progress
 
 # View help
 easycopy --help
@@ -96,6 +116,16 @@ easycopy https://github.com/rust-lang/rust -o rust-src.html --no-open
 
 # Increase max file size for larger files
 easycopy https://github.com/torvalds/linux --max-bytes 200000
+
+# Analyze a specific release version
+easycopy https://github.com/rust-lang/cargo --tag 0.75.0
+
+# Compare different branches (generate separate files)
+easycopy https://github.com/user/project --branch main -o main.html --no-open
+easycopy https://github.com/user/project --branch develop -o develop.html --no-open
+
+# Analyze your current working directory
+easycopy . -o my-project.html
 ```
 
 ## Platform-Specific Notes

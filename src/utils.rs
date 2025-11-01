@@ -18,21 +18,18 @@ pub fn bytes_human(n: u64) -> String {
     }
 }
 
-/// Derive a temporary output path from the repo URL
-pub fn derive_temp_output_path(repo_url: &str) -> PathBuf {
+/// Derive repository name from URL or path
+pub fn derive_repo_name(repo_url: &str) -> String {
     let parts: Vec<&str> = repo_url.trim_end_matches('/').split('/').collect();
-    let repo_name = if parts.len() >= 2 {
+    if parts.len() >= 2 {
         let mut name = parts[parts.len() - 1];
         if name.ends_with(".git") {
             name = &name[..name.len() - 4];
         }
-        name
+        name.to_string()
     } else {
-        "repo"
-    };
-
-    let filename = format!("{}.html", repo_name);
-    std::env::temp_dir().join(filename)
+        "repo".to_string()
+    }
 }
 
 /// Simple slugify for creating HTML anchors
@@ -67,12 +64,9 @@ mod tests {
     }
 
     #[test]
-    fn test_derive_temp_output_path() {
-        let path = derive_temp_output_path("https://github.com/owner/repo");
-        assert!(path.to_string_lossy().contains("repo.html"));
-
-        let path = derive_temp_output_path("https://github.com/owner/repo.git");
-        assert!(path.to_string_lossy().contains("repo.html"));
+    fn test_derive_repo_name() {
+        assert_eq!(derive_repo_name("https://github.com/owner/repo"), "repo");
+        assert_eq!(derive_repo_name("https://github.com/owner/repo.git"), "repo");
     }
 
     #[test]

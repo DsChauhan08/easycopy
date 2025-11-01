@@ -41,6 +41,9 @@ infer = "0.16"
 # Serialization for templates
 serde = { version = "1.0", features = ["derive"] }
 
+# Progress indicators
+indicatif = "0.17"
+
 [profile.release]
 opt-level = 3
 lto = true

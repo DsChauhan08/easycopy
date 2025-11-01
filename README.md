@@ -24,7 +24,42 @@ A Rust implementation of [rendergit](https://github.com/karpathy/rendergit) that
 
 ## Installation
 
-### Prerequisites
+### Download Pre-built Binaries (Recommended)
+
+Download the latest release from [GitHub Releases](https://github.com/DsChauhan08/easycopy/releases):
+
+**Debian/Ubuntu (.deb):**
+```bash
+# Download the .deb file from releases, then:
+sudo dpkg -i easycopy_2.0.0-1_amd64.deb
+
+# Or install directly from URL:
+wget https://github.com/DsChauhan08/easycopy/releases/download/v2.0.0/easycopy_2.0.0-1_amd64.deb
+sudo dpkg -i easycopy_2.0.0-1_amd64.deb
+```
+
+**Fedora/RHEL/CentOS (.rpm):**
+```bash
+# Download the .rpm file from releases, then:
+sudo rpm -i easycopy-2.0.0-1.x86_64.rpm
+
+# Or install directly from URL:
+wget https://github.com/DsChauhan08/easycopy/releases/download/v2.0.0/easycopy-2.0.0-1.x86_64.rpm
+sudo rpm -i easycopy-2.0.0-1.x86_64.rpm
+```
+
+**Windows (.zip):**
+1. Download `easycopy-x86_64-pc-windows-msvc-v2.0.0.zip` from releases
+2. Extract the zip file
+3. Move `easycopy.exe` to a folder in your PATH (e.g., `C:\Program Files\easycopy\`)
+4. Or run directly from the extracted folder
+
+**macOS (.dmg):**
+1. Download `easycopy-x86_64-apple-darwin-v2.0.0.dmg` from releases
+2. Open the .dmg file
+3. Drag easycopy to Applications or install to `/usr/local/bin`
+
+### Prerequisites (for building from source)
 
 You need to have Rust installed. If you don't have it:
 

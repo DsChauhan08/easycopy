@@ -57,10 +57,40 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
       - name: Build (vendored OpenSSL)
         run: cargo build --release
+      - name: Install create-dmg
+        run: brew install create-dmg
+      - name: Create .dmg installer
+        run: |
+          mkdir -p dist/dmg
+          cp target/release/${{ env.PACKAGE_NAME }} dist/dmg/
+          chmod +x dist/dmg/${{ env.PACKAGE_NAME }}
+          
+          # Create a simple DMG
+          create-dmg \
+            --volname "easycopy Installer" \
+            --window-pos 200 120 \
+            --window-size 600 400 \
+            --icon-size 100 \
+            --hide-extension ${{ env.PACKAGE_NAME }} \
+            --app-drop-link 450 185 \
+            ${{ env.PACKAGE_NAME }}-x86_64-apple-darwin-${{ github.ref_name }}.dmg \
+            dist/dmg/ || true
+          
+          # Fallback: if create-dmg fails, create simple DMG with hdiutil
+          if [ ! -f "${{ env.PACKAGE_NAME }}-x86_64-apple-darwin-${{ github.ref_name }}.dmg" ]; then
+            hdiutil create -volname "easycopy" -srcfolder dist/dmg -ov -format UDZO ${{ env.PACKAGE_NAME }}-x86_64-apple-darwin-${{ github.ref_name }}.dmg
+          fi
+          
+          ls -lh ${{ env.PACKAGE_NAME }}-x86_64-apple-darwin-${{ github.ref_name }}.dmg
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PACKAGE_NAME }}-macos
+          path: ${{ env.PACKAGE_NAME }}-x86_64-apple-darwin-${{ github.ref_name }}.dmg
 
   publish:
     name: Create Release & Upload Packages
-    needs: [build-windows]
+    needs: [build-windows, build-macos]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -119,6 +149,8 @@ jobs:
           mkdir -p release
           # Copy Windows zip
           find artifacts -type f -name "*.zip" -exec cp {} release/ \;
+          # Copy macOS dmg
+          find artifacts -type f -name "*.dmg" -exec cp {} release/ \;
           # Copy packages
           cp packages/*.deb release/ 2>/dev/null || true
           cp packages/*.rpm release/ 2>/dev/null || true

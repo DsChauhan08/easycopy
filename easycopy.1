@@ -1,0 +1,92 @@
+.\" Manpage for easycopy
+.\" Contact dhananjay@example.com for corrections.
+.TH EASYCOPY 1 "December 2025" "easycopy 2.0.0" "User Commands"
+.SH NAME
+easycopy \- flatten a GitHub repository into a single static HTML page
+.SH SYNOPSIS
+.B easycopy
+[\fIOPTIONS\fR] \fIREPO_URL_OR_PATH\fR
+.SH DESCRIPTION
+.B easycopy
+is a Rust implementation of rendergit that works on Windows, Linux, and Android (Termux).
+It flattens any GitHub repository or local directory into a single, static HTML page with
+syntax highlighting, markdown rendering, and a clean sidebar navigation.
+.PP
+The generated HTML includes two view modes:
+.TP
+.B Human View
+Pretty interface with syntax highlighting and navigation
+.TP
+.B LLM View
+Raw CXML text format for copying to Claude/ChatGPT for code analysis
+.SH OPTIONS
+.TP
+.B \-h, \-\-help
+Print help information and exit
+.TP
+.B \-V, \-\-version
+Print version information and exit
+.TP
+.B \-o, \-\-out \fIFILE\fR
+Output HTML file path (default: temporary file derived from repo name)
+.TP
+.B \-\-max\-bytes \fINUM\fR
+Maximum file size to render in bytes (default: 51200). Larger files are listed but skipped.
+.TP
+.B \-\-no\-open
+Don't open the HTML file in browser after generation
+.TP
+.B \-b, \-\-branch \fINAME\fR
+Clone a specific branch instead of default branch
+.TP
+.B \-t, \-\-tag \fITAG\fR
+Clone a specific tag instead of default branch
+.TP
+.B \-c, \-\-commit \fIHASH\fR
+Checkout a specific commit hash
+.TP
+.B \-\-no\-progress
+Disable progress indicators (useful for piping output or CI/automation)
+.SH EXAMPLES
+.TP
+Analyze a GitHub repository:
+.B easycopy https://github.com/username/repo
+.TP
+Analyze a local directory:
+.B easycopy /path/to/project
+.br
+.B easycopy .
+.TP
+Save to specific location without opening:
+.B easycopy https://github.com/user/repo \-o output.html \-\-no-open
+.TP
+Clone a specific branch:
+.B easycopy https://github.com/user/repo \-\-branch develop
+.TP
+Clone a specific tag:
+.B easycopy https://github.com/user/repo \-\-tag v2.0.0
+.TP
+Increase max file size for larger files:
+.B easycopy https://github.com/user/repo \-\-max\-bytes 200000
+.SH EXIT STATUS
+.TP
+.B 0
+Successful execution
+.TP
+.B 1
+Error (failed to clone, read files, or generate HTML)
+.SH FILES
+.TP
+.I /tmp/<repo-name>.html
+Default output location when \fB\-o\fR is not specified
+.SH AUTHOR
+Written by Dhananjay Singh.
+.SH REPORTING BUGS
+Report bugs at: https://github.com/DsChauhan08/easycopy/issues
+.SH COPYRIGHT
+BSD Zero Clause License. This is free software; see the source for copying conditions.
+.SH SEE ALSO
+.BR git (1),
+.BR tree (1)
+.PP
+Full documentation at: https://github.com/DsChauhan08/easycopy

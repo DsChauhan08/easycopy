@@ -35,8 +35,7 @@ tempfile = "3.13"
 # Open browser
 opener = "0.7"
 
-# File type detection
-infer = "0.16"
+
 
 # Serialization for templates
 serde = { version = "1.0", features = ["derive"] }
@@ -66,4 +65,5 @@ assets = [
   ["target/release/easycopy", "usr/bin/", "755"],
   ["README.md", "usr/share/doc/easycopy/", "644"],
   ["LICENSE", "usr/share/doc/easycopy/", "644"],
+  ["easycopy.1", "usr/share/man/man1/", "644"],
 ]

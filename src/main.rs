@@ -31,7 +31,12 @@ fn detect_source(input: &str) -> RepoSource {
 
 /// Flatten a GitHub repo into a single static HTML page for fast skimming and search
 #[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
+#[command(
+    author,
+    version,
+    about = "Flatten a GitHub repo into a single static HTML page",
+    long_about = "A Rust implementation of rendergit that flattens any GitHub repository or local directory into a single, static HTML page with syntax highlighting, markdown rendering, and sidebar navigation. Perfect for code review, exploration, and an instant Ctrl+F experience."
+)]
 struct Args {
     /// GitHub repository URL (https://github.com/owner/repo[.git]) or local directory path
     repo_url_or_path: String,

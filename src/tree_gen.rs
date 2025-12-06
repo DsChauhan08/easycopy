@@ -18,6 +18,8 @@ pub fn generate_tree(root: &Path) -> Result<String> {
 fn try_tree_command(root: &Path) -> Result<String> {
     let output = Command::new("tree")
         .arg("-a")
+        .arg("-I")
+        .arg(".git")
         .arg(".")
         .current_dir(root)
         .output()?;

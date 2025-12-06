@@ -24,35 +24,7 @@ A Rust implementation of [rendergit](https://github.com/karpathy/rendergit) that
 
 ## Installation
 
-### Quick Install (Package Managers)
-
-**Homebrew** (macOS/Linux):
-```bash
-brew tap DsChauhan08/easycopy
-brew install easycopy
-```
-
-**AUR** (Arch Linux):
-```bash
-yay -S easycopy
-# or
-paru -S easycopy
-```
-
-**DNF/Fedora** (COPR):
-```bash
-sudo dnf copr enable DsChauhan08/easycopy
-sudo dnf install easycopy
-```
-
-**APT/Ubuntu** (PPA):
-```bash
-sudo add-apt-repository ppa:DsChauhan08/easycopy
-sudo apt update
-sudo apt install easycopy
-```
-
-### Download Pre-built Binaries
+## Download Pre-built Binaries
 
 Download the latest release from [GitHub Releases](https://github.com/DsChauhan08/easycopy/releases):
 

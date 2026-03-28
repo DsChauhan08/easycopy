@@ -1,4 +1,4 @@
-# @dschauhan/easycopy-mcp
+# @dschauhan08/easycopy-mcp
 
 MCP server that exposes `easycopy` as tools for AI clients via stdio.
 
@@ -12,13 +12,13 @@ It supports:
 Run directly with `npx`:
 
 ```bash
-npx -y @dschauhan/easycopy-mcp
+npx -y @dschauhan08/easycopy-mcp
 ```
 
 You can also install globally:
 
 ```bash
-npm i -g @dschauhan/easycopy-mcp
+npm i -g @dschauhan08/easycopy-mcp
 easycopy-mcp
 ```
 
@@ -31,7 +31,7 @@ Example MCP client config using `npx`:
   "mcpServers": {
     "easycopy": {
       "command": "npx",
-      "args": ["-y", "@dschauhan/easycopy-mcp"],
+      "args": ["-y", "@dschauhan08/easycopy-mcp"],
       "env": {
         "EASYCOPY_VERSION_TAG": "latest"
       }

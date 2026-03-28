@@ -1,30 +1,34 @@
 # @dschauhan08/easycopy-mcp
 
-MCP server that exposes `easycopy` as tools for AI clients via stdio.
+Production-grade MCP server for `easycopy`, built for reliable use across MCP-capable AI clients.
 
-It supports:
-- Rendering a repository (local path or remote git URL) into a single HTML output
-- Returning render metadata and optional inline HTML
-- Extracting CXML text from easycopy output for LLM workflows
+This server turns any repo (local or remote) into LLM-friendly artifacts:
+- flattened HTML for instant exploration
+- extracted CXML for direct model ingestion
+- structured MCP responses for predictable tool chaining
 
-## Install / Run
+## Why teams use this
 
-Run directly with `npx`:
+- **Safety-first defaults**: no browser popups, bounded output options, explicit timeouts, strong argument validation
+- **Cross-client MCP compatibility**: proper stdio framing, JSON-RPC handling, `structuredContent` support
+- **Deterministic outputs**: checksums, metrics, stable response shape
+- **Operational visibility**: built-in `health_check` diagnostics
+- **Practical lifecycle tools**: list, inspect, and clean old generated outputs
+
+## Install
 
 ```bash
 npx -y @dschauhan08/easycopy-mcp
 ```
 
-You can also install globally:
+Or global:
 
 ```bash
 npm i -g @dschauhan08/easycopy-mcp
 easycopy-mcp
 ```
 
-## Client Configuration
-
-Example MCP client config using `npx`:
+## MCP client config
 
 ```json
 {
@@ -40,55 +44,113 @@ Example MCP client config using `npx`:
 }
 ```
 
+This works with MCP-compatible clients across major ecosystems (Claude Desktop-compatible clients, Cursor-compatible clients, and other MCP SDK-based tooling).
+
 ## Tools
 
 ### `render_repo`
 
-Input:
-- `repo` (required): local directory path or git URL
-- `out_path` (optional): HTML output path
-- `max_bytes` (optional): max file size to render
-- `branch` / `tag` / `commit` (optional): git ref selectors (mutually exclusive)
-- `no_progress` (optional): disable easycopy progress output
-- `return_inline` (optional): include inline HTML if size is within threshold
+Render a repository into a single HTML output and optionally include inline HTML/CXML in the result.
 
-Output:
-- JSON string containing `output_path`, `metrics`, `stderr_summary`, and optional `inline_html`
+Inputs:
+- `repo` (required)
+- `out_path` (optional)
+- `output_dir` (optional)
+- `output_prefix` (optional)
+- `max_bytes` (optional)
+- `branch` / `tag` / `commit` (optional, mutually exclusive)
+- `no_progress` (optional)
+- `include_inline_html` (optional)
+- `return_inline` (legacy alias, optional)
+- `inline_limit_bytes` (optional)
+- `include_cxml` (optional)
+- `include_output_excerpt` (optional)
+- `timeout_ms` (optional)
+
+Returns:
+- `structuredContent` with output path, checksums, metrics, binary source/version, stderr/stdout tails
+- optional `inline_html`, `output_excerpt`, and `cxml`
 
 ### `get_cxml`
 
-Input:
+Generate output and extract CXML only.
+
+Inputs:
 - `repo` (required)
-- `max_bytes` (optional, default 51200)
-- `branch` / `tag` / `commit` (optional)
+- `max_bytes`, `branch`, `tag`, `commit`, `no_progress`, `timeout_ms` (optional)
 
-Output:
-- JSON string containing extracted `cxml` text and metadata
+Returns:
+- `structuredContent` with `cxml`, checksum, render metrics, runtime details
 
-## Binary Resolution
+### `health_check`
 
-The server resolves `easycopy` in this order:
-1. `EASYCOPY_PATH` if set
-2. Local repo build at `target/release/easycopy` (or `.exe`)
-3. Download matching release artifact from GitHub and cache it
+Runtime and binary diagnostics.
 
-Cache directory default:
-- `~/.cache/easycopy-mcp`
+Inputs:
+- `resolve_binary` (optional, default `true`)
 
-Environment variables:
-- `EASYCOPY_PATH`: explicit path to binary
-- `EASYCOPY_VERSION_TAG`: release tag (or `latest`)
-- `EASYCOPY_MCP_CACHE_DIR`: custom cache directory
-- `EASYCOPY_INLINE_LIMIT_BYTES`: max inline HTML response size
+Returns:
+- node/runtime info, platform, env hints, cache path, resolved binary details
 
-## Development
+### `list_outputs`
+
+List generated HTML outputs sorted by newest first.
+
+Inputs:
+- `directory` (optional)
+- `prefix` (optional)
+- `limit` (optional)
+
+### `read_output`
+
+Read excerpt plus checksum from an existing generated output file.
+
+Inputs:
+- `path` (required)
+- `max_chars` (optional)
+
+### `cleanup_outputs`
+
+Delete old generated outputs while keeping recent ones.
+
+Inputs:
+- `directory` (optional)
+- `prefix` (optional)
+- `keep_latest` (optional)
+- `dry_run` (optional, default `true`)
+
+## Safety and reliability notes
+
+- Commands run with timeouts and typed argument checks
+- Archive extraction validates platform/tool availability
+- Temporary extraction directories are cleaned up
+- No destructive repo actions; this server only calls `easycopy`
+- Output management tools default to safe behavior (`dry_run: true`)
+
+## Environment variables
+
+- `EASYCOPY_PATH`: explicit easycopy binary path
+- `EASYCOPY_VERSION_TAG`: release tag to fetch (`latest` default)
+- `EASYCOPY_RELEASE_OWNER`: GitHub owner override (default `DsChauhan08`)
+- `EASYCOPY_RELEASE_REPO`: GitHub repo override (default `easycopy`)
+- `EASYCOPY_MCP_CACHE_DIR`: custom binary cache directory
+- `EASYCOPY_INLINE_LIMIT_BYTES`: default inline HTML cap
+- `EASYCOPY_OUTPUT_DIR`: default output directory for generated HTML
+- `EASYCOPY_OUTPUT_PREFIX`: default output file prefix
+- `GITHUB_TOKEN`: optional token for release API/download resilience
+
+## Local development
 
 ```bash
 cd mcp-server
 npm run check
+npm run selftest
+npm pack --dry-run
 ```
 
-## Publish
+## Publishing notes
+
+This package is published by repository workflow on `mcp-v*` tags. npm package page content is sourced from this README automatically during `npm publish`.
 
 ```bash
 cd mcp-server

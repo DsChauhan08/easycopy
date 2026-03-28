@@ -1,0 +1,33 @@
+{
+  "name": "@dschauhan/easycopy-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for easycopy that renders repositories to HTML and CXML",
+  "license": "BSD-Zero-Clause",
+  "type": "module",
+  "bin": {
+    "easycopy-mcp": "bin/easycopy-mcp.js"
+  },
+  "files": [
+    "bin",
+    "README.md"
+  ],
+  "scripts": {
+    "start": "node bin/easycopy-mcp.js",
+    "check": "node --check bin/easycopy-mcp.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "easycopy",
+    "github",
+    "code-review"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DsChauhan08/easycopy.git",
+    "directory": "mcp-server"
+  }
+}

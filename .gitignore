@@ -4,3 +4,6 @@
 Cargo.lock
 *.html
 .DS_Store
+node_modules/
+mcp-server/node_modules/
+mcp-server/.cache/

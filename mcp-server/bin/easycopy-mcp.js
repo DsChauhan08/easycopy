@@ -1666,43 +1666,25 @@ function parseFramedFromBuffer() {
 process.stdin.on("data", (chunk) => {
   buffered = Buffer.concat([buffered, chunk]);
 
-  while (true) {
-    const boundary = findHeaderBoundary(buffered);
-    if (!boundary) break;
-
-    const headerEnd = boundary.index;
-    const delimiterLength = boundary.delimiterLength;
-
-    const headerText = buffered.slice(0, headerEnd).toString("utf8");
-    const headerLines = headerText.split(/\r?\n/);
-    const contentLengthHeader = headerLines.find((line) => line.toLowerCase().startsWith("content-length:"));
-    if (!contentLengthHeader) {
-      writeFrame(error(null, new JsonRpcError(-32700, "Missing Content-Length header")));
-      buffered = Buffer.alloc(0);
-      break;
+  if (!transportMode) {
+    const firstLineEnd = buffered.indexOf("\n");
+    if (firstLineEnd !== -1) {
+      const firstLine = buffered.slice(0, firstLineEnd).toString("utf8").trim();
+      transportMode = firstLine.toLowerCase().startsWith("content-length:") ? TRANSPORT_FRAMED : TRANSPORT_JSONL;
+    } else {
+      const firstChunk = buffered.toString("utf8").trimStart();
+      if (firstChunk.startsWith("{")) {
+        transportMode = TRANSPORT_JSONL;
+      }
     }
-
-    const len = Number.parseInt(contentLengthHeader.split(":")[1].trim(), 10);
-    if (!Number.isFinite(len) || len < 0) {
-      writeFrame(error(null, new JsonRpcError(-32700, "Invalid Content-Length header")));
-      buffered = Buffer.alloc(0);
-      break;
-    }
-
-    const packetLen = headerEnd + delimiterLength + len;
-    if (buffered.length < packetLen) break;
-
-    const jsonBody = buffered.slice(headerEnd + delimiterLength, packetLen).toString("utf8");
-    buffered = buffered.slice(packetLen);
-
-    const parsed = parseMaybeJson(jsonBody);
-    if (!parsed) {
-      writeFrame(error(null, new JsonRpcError(-32700, "Parse error")));
-      continue;
-    }
-
-    queue = queue.then(() => handleMessageObject(parsed));
   }
+
+  if (transportMode === TRANSPORT_JSONL) {
+    parseJsonLinesFromBuffer();
+    return;
+  }
+
+  parseFramedFromBuffer();
 });
 
 process.stdin.on("error", () => {});

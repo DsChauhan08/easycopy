@@ -1494,13 +1494,23 @@ async function handleRequest(message) {
   const { id, method, params } = message;
 
   if (method === "initialize") {
+    const requestedProtocolVersion = params?.protocolVersion;
+    const negotiatedProtocolVersion = typeof requestedProtocolVersion === "string" && requestedProtocolVersion.trim() !== ""
+      ? requestedProtocolVersion
+      : PROTOCOL_VERSION;
+
     return result(id, {
-      protocolVersion: PROTOCOL_VERSION,
+      protocolVersion: negotiatedProtocolVersion,
       serverInfo: SERVER_INFO,
       capabilities: { tools: {} },
-      instructions:
-        "AI-first MCP server: use search_code/read_file/get_context_pack for targeted LLM context. render_repo/get_cxml are optional export tools.",
     });
+  }
+
+  if (method === "initialized" || method === "notifications/initialized") {
+    if (id === undefined || id === null) {
+      return null;
+    }
+    return result(id, {});
   }
 
   if (method === "tools/list") {
@@ -1540,10 +1550,6 @@ async function handleRequest(message) {
 
   if (method === "ping") {
     return result(id, { ok: true, ts: Date.now() });
-  }
-
-  if (method === "notifications/initialized") {
-    return null;
   }
 
   throw new JsonRpcError(-32601, `Method not found: ${method}`);
@@ -1623,6 +1629,29 @@ function parseJsonLinesFromBuffer() {
   }
 }
 
+function parseMcpHeadersAndBody(rawHeaderText, bodyText) {
+  const rawLines = rawHeaderText.split(/\r?\n/);
+  const headers = {};
+  for (const line of rawLines) {
+    const idx = line.indexOf(":");
+    if (idx === -1) continue;
+    const key = line.slice(0, idx).trim().toLowerCase();
+    const value = line.slice(idx + 1).trim();
+    headers[key] = value;
+  }
+
+  if (headers["content-type"] && headers["content-type"].toLowerCase().includes("application/json") === false) {
+    throw new JsonRpcError(-32700, `Unsupported Content-Type: ${headers["content-type"]}`);
+  }
+
+  const parsed = parseMaybeJson(bodyText);
+  if (!parsed) {
+    throw new JsonRpcError(-32700, "Parse error");
+  }
+
+  return parsed;
+}
+
 function parseFramedFromBuffer() {
   while (true) {
     const boundary = findHeaderBoundary(buffered);
@@ -1653,19 +1682,17 @@ function parseFramedFromBuffer() {
     const jsonBody = buffered.slice(headerEnd + delimiterLength, packetLen).toString("utf8");
     buffered = buffered.slice(packetLen);
 
-    const parsed = parseMaybeJson(jsonBody);
-    if (!parsed) {
-      writeFrame(error(null, new JsonRpcError(-32700, "Parse error")));
+    try {
+      const parsed = parseMcpHeadersAndBody(headerText, jsonBody);
+      enqueueParsedMessage(parsed);
+    } catch (parseErr) {
+      writeFrame(error(null, parseErr));
       continue;
     }
-
-    enqueueParsedMessage(parsed);
   }
 }
 
-process.stdin.on("data", (chunk) => {
-  buffered = Buffer.concat([buffered, chunk]);
-
+function tryDetectTransportAndParse() {
   if (!transportMode) {
     const firstLineEnd = buffered.indexOf("\n");
     if (firstLineEnd !== -1) {
@@ -1685,12 +1712,19 @@ process.stdin.on("data", (chunk) => {
   }
 
   parseFramedFromBuffer();
+}
+
+process.stdin.on("data", (chunk) => {
+  buffered = Buffer.concat([buffered, chunk]);
+  tryDetectTransportAndParse();
 });
 
 process.stdin.on("error", () => {});
 process.stdout.on("error", () => {
   setTimeout(() => process.exit(0), 10);
 });
+
+process.stdin.resume();
 
 if (process.argv.includes("--version")) {
   process.stdout.write(`${SERVER_INFO.name} ${SERVER_INFO.version}\n`);

@@ -4,7 +4,11 @@ import sys
 import subprocess
 import threading
 
-TARGET = ["node", "/home/regulus/Programs/easycopy/mcp-server/bin/easycopy-mcp.js"]
+TARGET = (
+    sys.argv[1:]
+    if len(sys.argv) > 1
+    else ["node", "/home/regulus/Programs/easycopy/mcp-server/bin/easycopy-mcp.js"]
+)
 LOG_DIR = "/tmp/easycopy-mcp-proxy"
 os.makedirs(LOG_DIR, exist_ok=True)
 

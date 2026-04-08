@@ -49,6 +49,10 @@ const RELEASE_TAG = process.env.EASYCOPY_VERSION_TAG || DEFAULT_RELEASE_TAG;
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
+const TRANSPORT_FRAMED = "framed";
+const TRANSPORT_JSONL = "jsonl";
+let transportMode = null;
+
 const repoIndexCache = new Map();
 
 const BINARY_EXTENSIONS = new Set([
@@ -1546,7 +1550,13 @@ async function handleRequest(message) {
 }
 
 function writeFrame(payload) {
-  const body = Buffer.from(JSON.stringify(payload), "utf8");
+  const serialized = JSON.stringify(payload);
+  if (transportMode === TRANSPORT_JSONL) {
+    process.stdout.write(serialized + "\n");
+    return;
+  }
+
+  const body = Buffer.from(serialized, "utf8");
   const header = Buffer.from(`Content-Length: ${body.length}\r\n\r\n`, "utf8");
   process.stdout.write(header);
   process.stdout.write(body);
@@ -1578,15 +1588,51 @@ async function handleMessageObject(message) {
 let buffered = Buffer.alloc(0);
 let queue = Promise.resolve();
 
-process.stdin.on("data", (chunk) => {
-  buffered = Buffer.concat([buffered, chunk]);
+function findHeaderBoundary(buf) {
+  const crlfIdx = buf.indexOf("\r\n\r\n");
+  const lfIdx = buf.indexOf("\n\n");
 
+  if (crlfIdx === -1 && lfIdx === -1) {
+    return null;
+  }
+  if (crlfIdx !== -1 && (lfIdx === -1 || crlfIdx < lfIdx)) {
+    return { index: crlfIdx, delimiterLength: 4 };
+  }
+  return { index: lfIdx, delimiterLength: 2 };
+}
+
+function enqueueParsedMessage(parsed) {
+  queue = queue.then(() => handleMessageObject(parsed));
+}
+
+function parseJsonLinesFromBuffer() {
   while (true) {
-    const headerEnd = buffered.indexOf("\r\n\r\n");
-    if (headerEnd === -1) break;
+    const lfIdx = buffered.indexOf("\n");
+    if (lfIdx === -1) break;
+
+    const line = buffered.slice(0, lfIdx).toString("utf8").trim();
+    buffered = buffered.slice(lfIdx + 1);
+    if (!line) continue;
+
+    const parsed = parseMaybeJson(line);
+    if (!parsed) {
+      writeFrame(error(null, new JsonRpcError(-32700, "Parse error")));
+      continue;
+    }
+    enqueueParsedMessage(parsed);
+  }
+}
+
+function parseFramedFromBuffer() {
+  while (true) {
+    const boundary = findHeaderBoundary(buffered);
+    if (!boundary) break;
+
+    const headerEnd = boundary.index;
+    const delimiterLength = boundary.delimiterLength;
 
     const headerText = buffered.slice(0, headerEnd).toString("utf8");
-    const headerLines = headerText.split("\r\n");
+    const headerLines = headerText.split(/\r?\n/);
     const contentLengthHeader = headerLines.find((line) => line.toLowerCase().startsWith("content-length:"));
     if (!contentLengthHeader) {
       writeFrame(error(null, new JsonRpcError(-32700, "Missing Content-Length header")));
@@ -1601,10 +1647,52 @@ process.stdin.on("data", (chunk) => {
       break;
     }
 
-    const packetLen = headerEnd + 4 + len;
+    const packetLen = headerEnd + delimiterLength + len;
     if (buffered.length < packetLen) break;
 
-    const jsonBody = buffered.slice(headerEnd + 4, packetLen).toString("utf8");
+    const jsonBody = buffered.slice(headerEnd + delimiterLength, packetLen).toString("utf8");
+    buffered = buffered.slice(packetLen);
+
+    const parsed = parseMaybeJson(jsonBody);
+    if (!parsed) {
+      writeFrame(error(null, new JsonRpcError(-32700, "Parse error")));
+      continue;
+    }
+
+    enqueueParsedMessage(parsed);
+  }
+}
+
+process.stdin.on("data", (chunk) => {
+  buffered = Buffer.concat([buffered, chunk]);
+
+  while (true) {
+    const boundary = findHeaderBoundary(buffered);
+    if (!boundary) break;
+
+    const headerEnd = boundary.index;
+    const delimiterLength = boundary.delimiterLength;
+
+    const headerText = buffered.slice(0, headerEnd).toString("utf8");
+    const headerLines = headerText.split(/\r?\n/);
+    const contentLengthHeader = headerLines.find((line) => line.toLowerCase().startsWith("content-length:"));
+    if (!contentLengthHeader) {
+      writeFrame(error(null, new JsonRpcError(-32700, "Missing Content-Length header")));
+      buffered = Buffer.alloc(0);
+      break;
+    }
+
+    const len = Number.parseInt(contentLengthHeader.split(":")[1].trim(), 10);
+    if (!Number.isFinite(len) || len < 0) {
+      writeFrame(error(null, new JsonRpcError(-32700, "Invalid Content-Length header")));
+      buffered = Buffer.alloc(0);
+      break;
+    }
+
+    const packetLen = headerEnd + delimiterLength + len;
+    if (buffered.length < packetLen) break;
+
+    const jsonBody = buffered.slice(headerEnd + delimiterLength, packetLen).toString("utf8");
     buffered = buffered.slice(packetLen);
 
     const parsed = parseMaybeJson(jsonBody);

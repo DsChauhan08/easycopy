@@ -15,7 +15,7 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir, homedir, platform, arch } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, relative, resolve } from "node:path";
 import { createHash } from "node:crypto";
 import { spawn, spawnSync } from "node:child_process";
 import { Readable } from "node:stream";
@@ -23,16 +23,23 @@ import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
 const PROTOCOL_VERSION = "2024-11-05";
-const SERVER_INFO = { name: "easycopy-mcp", version: "0.2.0" };
+const SERVER_INFO = { name: "easycopy-mcp", version: "0.3.0" };
 const ROOT = "easycopy-mcp";
 
 const DEFAULT_RELEASE_OWNER = "DsChauhan08";
 const DEFAULT_RELEASE_REPO = "easycopy";
 const DEFAULT_RELEASE_TAG = "latest";
+
 const DEFAULT_MAX_BYTES = 50 * 1024;
 const DEFAULT_INLINE_LIMIT = 200_000;
 const DEFAULT_OUTPUT_DIR = process.cwd();
 const DEFAULT_OUTPUT_PREFIX = "easycopy";
+
+const DEFAULT_READ_MAX_CHARS = 20_000;
+const DEFAULT_SEARCH_LIMIT = 50;
+const DEFAULT_LIST_LIMIT = 200;
+const DEFAULT_CONTEXT_LIMIT = 10;
+const DEFAULT_SCAN_MAX_BYTES = 2 * 1024 * 1024; // 2MB per file for retrieval indexing
 
 const CACHE_DIR = resolve(process.env.EASYCOPY_MCP_CACHE_DIR || join(homedir(), ".cache", ROOT));
 const RELEASE_OWNER = process.env.EASYCOPY_RELEASE_OWNER || DEFAULT_RELEASE_OWNER;
@@ -41,6 +48,14 @@ const RELEASE_TAG = process.env.EASYCOPY_VERSION_TAG || DEFAULT_RELEASE_TAG;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
+
+const repoIndexCache = new Map();
+
+const BINARY_EXTENSIONS = new Set([
+  ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".ico", ".pdf", ".zip", ".tar", ".gz", ".xz", ".7z", ".rar",
+  ".mp3", ".mp4", ".mov", ".avi", ".mkv", ".wav", ".ogg", ".flac", ".ttf", ".otf", ".woff", ".woff2", ".so",
+  ".dll", ".dylib", ".class", ".jar", ".exe", ".bin", ".wasm",
+]);
 
 class JsonRpcError extends Error {
   constructor(code, message, data) {
@@ -67,33 +82,34 @@ function assertObject(value, msg) {
   }
 }
 
-function ensureNumber(value, name, min = 1) {
-  if (value === undefined) {
-    return;
-  }
+function ensureNumber(value, name, min = 0) {
+  if (value === undefined) return;
   if (typeof value !== "number" || Number.isNaN(value) || value < min) {
     throw new JsonRpcError(-32602, `'${name}' must be a number >= ${min}`);
   }
 }
 
 function ensureBoolean(value, name) {
-  if (value === undefined) {
-    return;
-  }
+  if (value === undefined) return;
   if (typeof value !== "boolean") {
     throw new JsonRpcError(-32602, `'${name}' must be a boolean`);
   }
 }
 
 function ensureString(value, name, allowEmpty = false) {
-  if (value === undefined) {
-    return;
-  }
+  if (value === undefined) return;
   if (typeof value !== "string") {
     throw new JsonRpcError(-32602, `'${name}' must be a string`);
   }
   if (!allowEmpty && value.trim() === "") {
     throw new JsonRpcError(-32602, `'${name}' cannot be empty`);
+  }
+}
+
+function ensureArray(value, name) {
+  if (value === undefined) return;
+  if (!Array.isArray(value)) {
+    throw new JsonRpcError(-32602, `'${name}' must be an array`);
   }
 }
 
@@ -104,15 +120,21 @@ function validateRefArgs(args) {
   }
 }
 
+function ensureRepoPathString(args, toolName) {
+  if (typeof args.repo !== "string" || args.repo.trim() === "") {
+    throw new JsonRpcError(-32602, `'repo' is required for ${toolName} and must be a non-empty string`);
+  }
+}
+
 function validateRenderRepoArgs(args) {
   assertObject(args, "Invalid arguments for render_repo");
-  if (typeof args.repo !== "string" || args.repo.trim() === "") {
-    throw new JsonRpcError(-32602, "'repo' is required and must be a non-empty string");
-  }
+  ensureRepoPathString(args, "render_repo");
   ensureNumber(args.max_bytes, "max_bytes", 1);
   ensureNumber(args.inline_limit_bytes, "inline_limit_bytes", 1);
   ensureNumber(args.timeout_ms, "timeout_ms", 1000);
   ensureString(args.out_path, "out_path");
+  ensureString(args.output_dir, "output_dir");
+  ensureString(args.output_prefix, "output_prefix");
   ensureBoolean(args.include_inline_html, "include_inline_html");
   ensureBoolean(args.return_inline, "return_inline");
   ensureBoolean(args.include_cxml, "include_cxml");
@@ -122,26 +144,20 @@ function validateRenderRepoArgs(args) {
 
 function validateGetCxmlArgs(args) {
   assertObject(args, "Invalid arguments for get_cxml");
-  if (typeof args.repo !== "string" || args.repo.trim() === "") {
-    throw new JsonRpcError(-32602, "'repo' is required and must be a non-empty string");
-  }
+  ensureRepoPathString(args, "get_cxml");
   ensureNumber(args.max_bytes, "max_bytes", 1);
   ensureNumber(args.timeout_ms, "timeout_ms", 1000);
   validateRefArgs(args);
 }
 
 function validateHealthArgs(args) {
-  if (args === undefined) {
-    return;
-  }
+  if (args === undefined) return;
   assertObject(args, "Invalid arguments for health_check");
   ensureBoolean(args.resolve_binary, "resolve_binary");
 }
 
 function validateListOutputsArgs(args) {
-  if (args === undefined) {
-    return;
-  }
+  if (args === undefined) return;
   assertObject(args, "Invalid arguments for list_outputs");
   ensureString(args.directory, "directory");
   ensureString(args.prefix, "prefix");
@@ -155,14 +171,78 @@ function validateReadOutputArgs(args) {
 }
 
 function validateCleanupArgs(args) {
-  if (args === undefined) {
-    return;
-  }
+  if (args === undefined) return;
   assertObject(args, "Invalid arguments for cleanup_outputs");
   ensureString(args.directory, "directory");
   ensureString(args.prefix, "prefix");
   ensureNumber(args.keep_latest, "keep_latest", 0);
   ensureBoolean(args.dry_run, "dry_run");
+}
+
+function validateIndexRepoArgs(args) {
+  assertObject(args, "Invalid arguments for index_repo");
+  ensureRepoPathString(args, "index_repo");
+  ensureNumber(args.max_file_bytes, "max_file_bytes", 1);
+  ensureBoolean(args.refresh, "refresh");
+}
+
+function validateSearchCodeArgs(args) {
+  assertObject(args, "Invalid arguments for search_code");
+  ensureRepoPathString(args, "search_code");
+  ensureString(args.query, "query");
+  ensureBoolean(args.regex, "regex");
+  ensureBoolean(args.case_sensitive, "case_sensitive");
+  ensureNumber(args.limit, "limit", 1);
+  ensureString(args.include_glob, "include_glob");
+}
+
+function validateListFilesArgs(args) {
+  assertObject(args, "Invalid arguments for list_files");
+  ensureRepoPathString(args, "list_files");
+  ensureString(args.include_glob, "include_glob");
+  ensureNumber(args.limit, "limit", 1);
+}
+
+function validateReadFileArgs(args) {
+  assertObject(args, "Invalid arguments for read_file");
+  ensureRepoPathString(args, "read_file");
+  ensureString(args.path, "path");
+  ensureNumber(args.start_line, "start_line", 1);
+  ensureNumber(args.end_line, "end_line", 1);
+  ensureNumber(args.max_chars, "max_chars", 100);
+}
+
+function validateReadManyArgs(args) {
+  assertObject(args, "Invalid arguments for read_many");
+  ensureRepoPathString(args, "read_many");
+  ensureArray(args.paths, "paths");
+  if (!args.paths || args.paths.length === 0) {
+    throw new JsonRpcError(-32602, "'paths' is required and cannot be empty");
+  }
+  for (const p of args.paths) {
+    ensureString(p, "paths[]");
+  }
+  ensureNumber(args.max_chars_per_file, "max_chars_per_file", 100);
+}
+
+function validateRepoMapArgs(args) {
+  assertObject(args, "Invalid arguments for repo_map");
+  ensureRepoPathString(args, "repo_map");
+  ensureNumber(args.depth, "depth", 1);
+  ensureNumber(args.max_entries, "max_entries", 10);
+}
+
+function validateStatsArgs(args) {
+  assertObject(args, "Invalid arguments for stats");
+  ensureRepoPathString(args, "stats");
+}
+
+function validateContextPackArgs(args) {
+  assertObject(args, "Invalid arguments for get_context_pack");
+  ensureRepoPathString(args, "get_context_pack");
+  ensureString(args.query, "query");
+  ensureNumber(args.limit_files, "limit_files", 1);
+  ensureNumber(args.max_chars_per_file, "max_chars_per_file", 100);
 }
 
 function sleep(ms) {
@@ -419,15 +499,10 @@ function buildEasycopyArgs(input, outputPath) {
   if (input.no_progress === false) {
     args.pop();
   }
-  if (typeof input.branch === "string") {
-    args.push("--branch", input.branch);
-  }
-  if (typeof input.tag === "string") {
-    args.push("--tag", input.tag);
-  }
-  if (typeof input.commit === "string") {
-    args.push("--commit", input.commit);
-  }
+  if (typeof input.branch === "string") args.push("--branch", input.branch);
+  if (typeof input.tag === "string") args.push("--tag", input.tag);
+  if (typeof input.commit === "string") args.push("--commit", input.commit);
+
   return args;
 }
 
@@ -459,13 +534,9 @@ function extractCxmlFromHtml(html) {
   const marker = "<textarea id=\"llm-text\" readonly>";
   const endMarker = "</textarea>";
   const start = html.indexOf(marker);
-  if (start < 0) {
-    return "";
-  }
+  if (start < 0) return "";
   const end = html.indexOf(endMarker, start + marker.length);
-  if (end < 0) {
-    return "";
-  }
+  if (end < 0) return "";
 
   const escaped = html.slice(start + marker.length, end);
   return escaped
@@ -485,41 +556,27 @@ function getOutputPrefix(input) {
 }
 
 function listOutputFiles(directory, prefix) {
-  if (!existsSync(directory)) {
-    return [];
-  }
+  if (!existsSync(directory)) return [];
 
   const entries = readdirSync(directory);
   const out = [];
   for (const entry of entries) {
-    if (!entry.startsWith(prefix) || !entry.endsWith(".html")) {
-      continue;
-    }
+    if (!entry.startsWith(prefix) || !entry.endsWith(".html")) continue;
     const abs = join(directory, entry);
     try {
       const st = statSync(abs);
-      if (!st.isFile()) {
-        continue;
-      }
-      out.push({
-        path: abs,
-        name: entry,
-        size_bytes: st.size,
-        modified_ms: st.mtimeMs,
-      });
+      if (!st.isFile()) continue;
+      out.push({ path: abs, name: entry, size_bytes: st.size, modified_ms: st.mtimeMs });
     } catch {
       continue;
     }
   }
-
   out.sort((a, b) => b.modified_ms - a.modified_ms);
   return out;
 }
 
 function renderRepoOutputPath(args) {
-  if (args.out_path) {
-    return resolve(args.out_path);
-  }
+  if (args.out_path) return resolve(args.out_path);
   const outputDir = getOutputDirectoryPath(args.output_dir);
   const prefix = getOutputPrefix(args.output_prefix);
   const timestamp = Date.now();
@@ -528,10 +585,160 @@ function renderRepoOutputPath(args) {
 }
 
 function safeExcerpt(text, maxChars) {
-  if (text.length <= maxChars) {
-    return text;
+  return text.length <= maxChars ? text : text.slice(0, maxChars);
+}
+
+function isBinaryByExt(path) {
+  const ext = extname(path).toLowerCase();
+  return BINARY_EXTENSIONS.has(ext);
+}
+
+function normalizeRel(path) {
+  return path.replaceAll("\\", "/");
+}
+
+function looksTextFile(absPath, size) {
+  if (size === 0) return true;
+  if (isBinaryByExt(absPath)) return false;
+  try {
+    const buf = readFileSync(absPath);
+    const sample = buf.subarray(0, Math.min(buf.length, 8192));
+    if (sample.includes(0)) return false;
+    sample.toString("utf8");
+    return true;
+  } catch {
+    return false;
   }
-  return text.slice(0, maxChars);
+}
+
+function walkRepoFiles(repoRoot, options = {}) {
+  const maxFileBytes = options.maxFileBytes ?? DEFAULT_SCAN_MAX_BYTES;
+  const files = [];
+  const stack = [repoRoot];
+
+  while (stack.length > 0) {
+    const dir = stack.pop();
+    let entries;
+    try {
+      entries = readdirSync(dir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+
+    for (const entry of entries) {
+      const abs = join(dir, entry.name);
+      const rel = normalizeRel(relative(repoRoot, abs));
+      if (!rel || rel.startsWith(".git/") || rel === ".git") continue;
+
+      if (entry.isDirectory()) {
+        stack.push(abs);
+        continue;
+      }
+      if (!entry.isFile()) continue;
+
+      let st;
+      try {
+        st = statSync(abs);
+      } catch {
+        continue;
+      }
+
+      const size = st.size;
+      const textLike = looksTextFile(abs, size);
+      const tooLarge = size > maxFileBytes;
+      files.push({
+        abs,
+        rel,
+        size,
+        mtimeMs: st.mtimeMs,
+        textLike,
+        tooLarge,
+      });
+    }
+  }
+
+  files.sort((a, b) => a.rel.localeCompare(b.rel));
+  return files;
+}
+
+function getRepoRoot(repo) {
+  const root = resolve(repo);
+  if (!existsSync(root) || !statSync(root).isDirectory()) {
+    throw new JsonRpcError(-32602, `Repo path is not a readable local directory: ${repo}`);
+  }
+  return root;
+}
+
+function buildRepoIndex(repoRoot, options = {}) {
+  const maxFileBytes = options.maxFileBytes ?? DEFAULT_SCAN_MAX_BYTES;
+  const files = walkRepoFiles(repoRoot, { maxFileBytes });
+
+  const languageCounts = {};
+  let totalBytes = 0;
+  let textFiles = 0;
+  let binaryFiles = 0;
+  let skippedLarge = 0;
+
+  for (const f of files) {
+    totalBytes += f.size;
+    if (f.tooLarge) skippedLarge += 1;
+    if (f.textLike) textFiles += 1;
+    else binaryFiles += 1;
+
+    const ext = extname(f.rel).toLowerCase() || "(none)";
+    languageCounts[ext] = (languageCounts[ext] || 0) + 1;
+  }
+
+  return {
+    repoRoot,
+    scannedAt: Date.now(),
+    maxFileBytes,
+    files,
+    stats: {
+      total_files: files.length,
+      total_bytes: totalBytes,
+      text_files: textFiles,
+      binary_files: binaryFiles,
+      skipped_large_files: skippedLarge,
+      extensions: languageCounts,
+    },
+  };
+}
+
+function getRepoIndex(repo, opts = {}) {
+  const repoRoot = getRepoRoot(repo);
+  const maxFileBytes = opts.maxFileBytes ?? DEFAULT_SCAN_MAX_BYTES;
+  const key = `${repoRoot}::${maxFileBytes}`;
+  const cached = repoIndexCache.get(key);
+  if (cached && !opts.refresh) return cached;
+
+  const index = buildRepoIndex(repoRoot, { maxFileBytes });
+  repoIndexCache.set(key, index);
+  return index;
+}
+
+function globToRegex(globPattern) {
+  if (!globPattern || globPattern.trim() === "") return null;
+  const escaped = globPattern
+    .replace(/[.+^${}()|[\]\\]/g, "\\$&")
+    .replace(/\*\*/g, "::DOUBLESTAR::")
+    .replace(/\*/g, "[^/]*")
+    .replace(/::DOUBLESTAR::/g, ".*");
+  return new RegExp(`^${escaped}$`, "i");
+}
+
+function readTextSafely(absPath, maxChars) {
+  const content = readFileSync(absPath, "utf8");
+  return safeExcerpt(content, maxChars);
+}
+
+function toLineWindow(content, startLine = 1, endLine = 200) {
+  const lines = content.split(/\r?\n/);
+  const s = Math.max(1, startLine);
+  const e = Math.max(s, endLine);
+  const selected = lines.slice(s - 1, e);
+  const rendered = selected.map((line, idx) => `${s + idx}: ${line}`).join("\n");
+  return { start_line: s, end_line: e, line_count: selected.length, text: rendered };
 }
 
 function makeTextAndStructured(data) {
@@ -540,6 +747,8 @@ function makeTextAndStructured(data) {
     structuredContent: data,
   };
 }
+
+// ---------- Export-oriented tools (optional) ----------
 
 async function toolRenderRepo(args) {
   validateRenderRepoArgs(args);
@@ -558,6 +767,7 @@ async function toolRenderRepo(args) {
 
   const data = {
     ok: true,
+    mode: "export",
     tool: "render_repo",
     repo: args.repo,
     output_path: outputPath,
@@ -571,7 +781,6 @@ async function toolRenderRepo(args) {
     output_excerpt: includeExcerpt ? safeExcerpt(htmlText, 2000) : null,
     cxml: includeCxml ? extractCxmlFromHtml(htmlText) : null,
   };
-
   return makeTextAndStructured(data);
 }
 
@@ -589,6 +798,7 @@ async function toolGetCxml(args) {
 
   const data = {
     ok: true,
+    mode: "export",
     tool: "get_cxml",
     repo: args.repo,
     cxml,
@@ -602,6 +812,344 @@ async function toolGetCxml(args) {
 
   return makeTextAndStructured(data);
 }
+
+// ---------- AI-first retrieval tools ----------
+
+async function toolIndexRepo(args) {
+  validateIndexRepoArgs(args);
+  const index = getRepoIndex(args.repo, {
+    refresh: args.refresh === true,
+    maxFileBytes: args.max_file_bytes ?? DEFAULT_SCAN_MAX_BYTES,
+  });
+
+  const data = {
+    ok: true,
+    mode: "retrieval",
+    tool: "index_repo",
+    repo: args.repo,
+    repo_root: index.repoRoot,
+    scanned_at: index.scannedAt,
+    max_file_bytes: index.maxFileBytes,
+    stats: index.stats,
+  };
+  return makeTextAndStructured(data);
+}
+
+function makeSearchRegex(query, regex, caseSensitive) {
+  if (regex === true) {
+    try {
+      return new RegExp(query, caseSensitive ? "g" : "gi");
+    } catch (e) {
+      throw new JsonRpcError(-32602, "Invalid regex in 'query'", { query, cause: e.message });
+    }
+  }
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(escaped, caseSensitive ? "g" : "gi");
+}
+
+async function toolSearchCode(args) {
+  validateSearchCodeArgs(args);
+
+  const index = getRepoIndex(args.repo, {
+    refresh: args.refresh === true,
+    maxFileBytes: args.max_file_bytes ?? DEFAULT_SCAN_MAX_BYTES,
+  });
+
+  const query = args.query;
+  const regex = makeSearchRegex(query, args.regex === true, args.case_sensitive === true);
+  const globRegex = globToRegex(args.include_glob);
+  const limit = args.limit ?? DEFAULT_SEARCH_LIMIT;
+
+  const matches = [];
+  for (const file of index.files) {
+    if (!file.textLike || file.tooLarge) continue;
+    if (globRegex && !globRegex.test(file.rel)) continue;
+
+    let content;
+    try {
+      content = readFileSync(file.abs, "utf8");
+    } catch {
+      continue;
+    }
+
+    const lines = content.split(/\r?\n/);
+    for (let i = 0; i < lines.length; i += 1) {
+      const line = lines[i];
+      if (!regex.test(line)) {
+        regex.lastIndex = 0;
+        continue;
+      }
+      regex.lastIndex = 0;
+
+      matches.push({
+        path: file.rel,
+        line: i + 1,
+        preview: safeExcerpt(line, 300),
+      });
+
+      if (matches.length >= limit) {
+        break;
+      }
+    }
+    if (matches.length >= limit) {
+      break;
+    }
+  }
+
+  const data = {
+    ok: true,
+    mode: "retrieval",
+    tool: "search_code",
+    repo: args.repo,
+    query,
+    regex: args.regex === true,
+    case_sensitive: args.case_sensitive === true,
+    include_glob: args.include_glob || null,
+    limit,
+    returned: matches.length,
+    matches,
+  };
+
+  return makeTextAndStructured(data);
+}
+
+async function toolListFiles(args) {
+  validateListFilesArgs(args);
+
+  const index = getRepoIndex(args.repo, {
+    refresh: args.refresh === true,
+    maxFileBytes: args.max_file_bytes ?? DEFAULT_SCAN_MAX_BYTES,
+  });
+
+  const globRegex = globToRegex(args.include_glob);
+  const limit = args.limit ?? DEFAULT_LIST_LIMIT;
+
+  const files = [];
+  for (const f of index.files) {
+    if (globRegex && !globRegex.test(f.rel)) continue;
+    files.push({
+      path: f.rel,
+      size_bytes: f.size,
+      text_like: f.textLike,
+      too_large_for_index: f.tooLarge,
+    });
+    if (files.length >= limit) break;
+  }
+
+  const data = {
+    ok: true,
+    mode: "retrieval",
+    tool: "list_files",
+    repo: args.repo,
+    include_glob: args.include_glob || null,
+    limit,
+    returned: files.length,
+    files,
+  };
+
+  return makeTextAndStructured(data);
+}
+
+async function toolReadFile(args) {
+  validateReadFileArgs(args);
+  const repoRoot = getRepoRoot(args.repo);
+  const abs = resolve(repoRoot, args.path);
+
+  if (!abs.startsWith(repoRoot)) {
+    throw new JsonRpcError(-32602, "Path escapes repo root", { path: args.path });
+  }
+  if (!existsSync(abs) || !statSync(abs).isFile()) {
+    throw new JsonRpcError(-32602, "File not found", { path: args.path });
+  }
+
+  const st = statSync(abs);
+  if (!looksTextFile(abs, st.size)) {
+    throw new JsonRpcError(-32602, "File appears to be binary", { path: args.path });
+  }
+
+  const content = readTextSafely(abs, args.max_chars ?? DEFAULT_READ_MAX_CHARS);
+  const lineWindow = toLineWindow(content, args.start_line ?? 1, args.end_line ?? 250);
+
+  const data = {
+    ok: true,
+    mode: "retrieval",
+    tool: "read_file",
+    repo: args.repo,
+    path: normalizeRel(relative(repoRoot, abs)),
+    size_bytes: st.size,
+    ...lineWindow,
+  };
+
+  return makeTextAndStructured(data);
+}
+
+async function toolReadMany(args) {
+  validateReadManyArgs(args);
+  const repoRoot = getRepoRoot(args.repo);
+  const maxChars = args.max_chars_per_file ?? DEFAULT_READ_MAX_CHARS;
+
+  const files = [];
+  for (const p of args.paths) {
+    const abs = resolve(repoRoot, p);
+    if (!abs.startsWith(repoRoot)) {
+      files.push({ path: p, error: "path_escapes_repo" });
+      continue;
+    }
+    if (!existsSync(abs) || !statSync(abs).isFile()) {
+      files.push({ path: p, error: "not_found" });
+      continue;
+    }
+
+    const st = statSync(abs);
+    if (!looksTextFile(abs, st.size)) {
+      files.push({ path: p, error: "binary" });
+      continue;
+    }
+
+    const text = readTextSafely(abs, maxChars);
+    files.push({
+      path: normalizeRel(relative(repoRoot, abs)),
+      size_bytes: st.size,
+      excerpt: text,
+    });
+  }
+
+  const data = {
+    ok: true,
+    mode: "retrieval",
+    tool: "read_many",
+    repo: args.repo,
+    requested: args.paths.length,
+    returned: files.length,
+    files,
+  };
+
+  return makeTextAndStructured(data);
+}
+
+async function toolRepoMap(args) {
+  validateRepoMapArgs(args);
+
+  const index = getRepoIndex(args.repo, {
+    refresh: args.refresh === true,
+    maxFileBytes: args.max_file_bytes ?? DEFAULT_SCAN_MAX_BYTES,
+  });
+
+  const depth = args.depth ?? 3;
+  const maxEntries = args.max_entries ?? 300;
+  const entries = [];
+
+  for (const f of index.files) {
+    const segments = f.rel.split("/");
+    if (segments.length > depth) continue;
+    entries.push({
+      path: f.rel,
+      size_bytes: f.size,
+      text_like: f.textLike,
+    });
+    if (entries.length >= maxEntries) break;
+  }
+
+  const keyFiles = index.files
+    .filter((f) => {
+      const b = basename(f.rel).toLowerCase();
+      return ["readme.md", "package.json", "cargo.toml", "pyproject.toml", "go.mod", "tsconfig.json"].includes(b);
+    })
+    .slice(0, 20)
+    .map((f) => f.rel);
+
+  const data = {
+    ok: true,
+    mode: "retrieval",
+    tool: "repo_map",
+    repo: args.repo,
+    depth,
+    max_entries: maxEntries,
+    key_files: keyFiles,
+    entries,
+  };
+
+  return makeTextAndStructured(data);
+}
+
+async function toolStats(args) {
+  validateStatsArgs(args);
+
+  const index = getRepoIndex(args.repo, {
+    refresh: args.refresh === true,
+    maxFileBytes: args.max_file_bytes ?? DEFAULT_SCAN_MAX_BYTES,
+  });
+
+  const sortedExts = Object.entries(index.stats.extensions)
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 40)
+    .map(([ext, count]) => ({ ext, count }));
+
+  const data = {
+    ok: true,
+    mode: "retrieval",
+    tool: "stats",
+    repo: args.repo,
+    ...index.stats,
+    top_extensions: sortedExts,
+  };
+
+  return makeTextAndStructured(data);
+}
+
+async function toolGetContextPack(args) {
+  validateContextPackArgs(args);
+
+  const limitFiles = args.limit_files ?? DEFAULT_CONTEXT_LIMIT;
+  const maxChars = args.max_chars_per_file ?? DEFAULT_READ_MAX_CHARS;
+  const search = await toolSearchCode({
+    repo: args.repo,
+    query: args.query,
+    regex: args.regex === true,
+    case_sensitive: args.case_sensitive === true,
+    limit: limitFiles * 20,
+    include_glob: args.include_glob,
+    refresh: args.refresh === true,
+    max_file_bytes: args.max_file_bytes,
+  });
+
+  const matches = search.structuredContent.matches || [];
+  const uniquePaths = [];
+  const seen = new Set();
+  for (const m of matches) {
+    if (!seen.has(m.path)) {
+      seen.add(m.path);
+      uniquePaths.push(m.path);
+    }
+    if (uniquePaths.length >= limitFiles) break;
+  }
+
+  const read = await toolReadMany({
+    repo: args.repo,
+    paths: uniquePaths,
+    max_chars_per_file: maxChars,
+  });
+
+  const data = {
+    ok: true,
+    mode: "retrieval",
+    tool: "get_context_pack",
+    repo: args.repo,
+    query: args.query,
+    selected_files: uniquePaths,
+    files: read.structuredContent.files,
+    search_meta: {
+      regex: args.regex === true,
+      case_sensitive: args.case_sensitive === true,
+      include_glob: args.include_glob || null,
+      total_matches_seen: matches.length,
+    },
+  };
+
+  return makeTextAndStructured(data);
+}
+
+// ---------- Existing utility tools ----------
 
 async function toolHealthCheck(args) {
   validateHealthArgs(args);
@@ -706,9 +1254,141 @@ async function toolCleanupOutputs(args) {
 function toolsListPayload() {
   return {
     tools: [
+      // AI-first retrieval tools
+      {
+        name: "index_repo",
+        description: "Build/refresh AI retrieval index for a local repository path.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            repo: { type: "string", description: "Local repository directory." },
+            refresh: { type: "boolean", description: "Force re-index even if cached." },
+            max_file_bytes: { type: "number", description: "Max file size considered for retrieval indexing." },
+          },
+          required: ["repo"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "search_code",
+        description: "Search text files across repo and return path/line previews.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            repo: { type: "string" },
+            query: { type: "string" },
+            regex: { type: "boolean" },
+            case_sensitive: { type: "boolean" },
+            include_glob: { type: "string", description: "Optional glob pattern, e.g. src/**/*.ts" },
+            limit: { type: "number" },
+            refresh: { type: "boolean" },
+            max_file_bytes: { type: "number" },
+          },
+          required: ["repo", "query"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "list_files",
+        description: "List files in repo with size and text/binary metadata.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            repo: { type: "string" },
+            include_glob: { type: "string" },
+            limit: { type: "number" },
+            refresh: { type: "boolean" },
+            max_file_bytes: { type: "number" },
+          },
+          required: ["repo"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "read_file",
+        description: "Read one text file with optional line window and char bound.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            repo: { type: "string" },
+            path: { type: "string" },
+            start_line: { type: "number" },
+            end_line: { type: "number" },
+            max_chars: { type: "number" },
+          },
+          required: ["repo", "path"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "read_many",
+        description: "Batch read multiple text files with bounded excerpts.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            repo: { type: "string" },
+            paths: { type: "array", items: { type: "string" } },
+            max_chars_per_file: { type: "number" },
+          },
+          required: ["repo", "paths"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "repo_map",
+        description: "Return compact repo map and key files for orientation.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            repo: { type: "string" },
+            depth: { type: "number" },
+            max_entries: { type: "number" },
+            refresh: { type: "boolean" },
+            max_file_bytes: { type: "number" },
+          },
+          required: ["repo"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "stats",
+        description: "Return repository text/binary counts and extension distribution.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            repo: { type: "string" },
+            refresh: { type: "boolean" },
+            max_file_bytes: { type: "number" },
+          },
+          required: ["repo"],
+          additionalProperties: false,
+        },
+      },
+      {
+        name: "get_context_pack",
+        description: "Build an LLM-ready context pack by searching then reading top relevant files.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            repo: { type: "string" },
+            query: { type: "string" },
+            regex: { type: "boolean" },
+            case_sensitive: { type: "boolean" },
+            include_glob: { type: "string" },
+            limit_files: { type: "number" },
+            max_chars_per_file: { type: "number" },
+            refresh: { type: "boolean" },
+            max_file_bytes: { type: "number" },
+          },
+          required: ["repo", "query"],
+          additionalProperties: false,
+        },
+      },
+
+      // Optional export tools
       {
         name: "render_repo",
-        description: "Render local/remote repository to easycopy HTML for LLM and human inspection.",
+        description: "(Optional export) Render repo to a single HTML artifact via easycopy.",
         inputSchema: {
           type: "object",
           properties: {
@@ -733,7 +1413,7 @@ function toolsListPayload() {
       },
       {
         name: "get_cxml",
-        description: "Run easycopy and return CXML text optimized for LLM ingestion.",
+        description: "(Optional export) Run easycopy and return extracted CXML text.",
         inputSchema: {
           type: "object",
           properties: {
@@ -749,6 +1429,8 @@ function toolsListPayload() {
           additionalProperties: false,
         },
       },
+
+      // Diagnostics and output lifecycle
       {
         name: "health_check",
         description: "Return runtime diagnostics and binary resolution status for MCP clients.",
@@ -812,7 +1494,8 @@ async function handleRequest(message) {
       protocolVersion: PROTOCOL_VERSION,
       serverInfo: SERVER_INFO,
       capabilities: { tools: {} },
-      instructions: "Use render_repo for HTML output and get_cxml for compact LLM-ready content.",
+      instructions:
+        "AI-first MCP server: use search_code/read_file/get_context_pack for targeted LLM context. render_repo/get_cxml are optional export tools.",
     });
   }
 
@@ -825,24 +1508,23 @@ async function handleRequest(message) {
     const args = params?.arguments || {};
 
     try {
-      if (toolName === "render_repo") {
-        return result(id, await toolRenderRepo(args));
-      }
-      if (toolName === "get_cxml") {
-        return result(id, await toolGetCxml(args));
-      }
-      if (toolName === "health_check") {
-        return result(id, await toolHealthCheck(args));
-      }
-      if (toolName === "list_outputs") {
-        return result(id, await toolListOutputs(args));
-      }
-      if (toolName === "read_output") {
-        return result(id, await toolReadOutput(args));
-      }
-      if (toolName === "cleanup_outputs") {
-        return result(id, await toolCleanupOutputs(args));
-      }
+      if (toolName === "index_repo") return result(id, await toolIndexRepo(args));
+      if (toolName === "search_code") return result(id, await toolSearchCode(args));
+      if (toolName === "list_files") return result(id, await toolListFiles(args));
+      if (toolName === "read_file") return result(id, await toolReadFile(args));
+      if (toolName === "read_many") return result(id, await toolReadMany(args));
+      if (toolName === "repo_map") return result(id, await toolRepoMap(args));
+      if (toolName === "stats") return result(id, await toolStats(args));
+      if (toolName === "get_context_pack") return result(id, await toolGetContextPack(args));
+
+      if (toolName === "render_repo") return result(id, await toolRenderRepo(args));
+      if (toolName === "get_cxml") return result(id, await toolGetCxml(args));
+
+      if (toolName === "health_check") return result(id, await toolHealthCheck(args));
+      if (toolName === "list_outputs") return result(id, await toolListOutputs(args));
+      if (toolName === "read_output") return result(id, await toolReadOutput(args));
+      if (toolName === "cleanup_outputs") return result(id, await toolCleanupOutputs(args));
+
       throw new JsonRpcError(-32601, `Unknown tool: ${toolName}`);
     } catch (toolErr) {
       return result(id, {
@@ -887,9 +1569,7 @@ async function handleMessageObject(message) {
 
   try {
     const response = await handleRequest(message);
-    if (response) {
-      writeFrame(response);
-    }
+    if (response) writeFrame(response);
   } catch (err) {
     writeFrame(error(message.id, err));
   }
@@ -903,9 +1583,7 @@ process.stdin.on("data", (chunk) => {
 
   while (true) {
     const headerEnd = buffered.indexOf("\r\n\r\n");
-    if (headerEnd === -1) {
-      break;
-    }
+    if (headerEnd === -1) break;
 
     const headerText = buffered.slice(0, headerEnd).toString("utf8");
     const headerLines = headerText.split("\r\n");
@@ -924,9 +1602,7 @@ process.stdin.on("data", (chunk) => {
     }
 
     const packetLen = headerEnd + 4 + len;
-    if (buffered.length < packetLen) {
-      break;
-    }
+    if (buffered.length < packetLen) break;
 
     const jsonBody = buffered.slice(headerEnd + 4, packetLen).toString("utf8");
     buffered = buffered.slice(packetLen);

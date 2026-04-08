@@ -1,19 +1,15 @@
 # @dschauhan08/easycopy-mcp
 
-Production-grade MCP server for `easycopy`, built for reliable use across MCP-capable AI clients.
+AI-first MCP server for repository understanding.
 
-This server turns any repo (local or remote) into LLM-friendly artifacts:
-- flattened HTML for instant exploration
-- extracted CXML for direct model ingestion
-- structured MCP responses for predictable tool chaining
+This package is designed for LLM workflows where **search + targeted reads** are the default path, and full HTML exports are optional.
 
-## Why teams use this
+## TL;DR
 
-- **Safety-first defaults**: no browser popups, bounded output options, explicit timeouts, strong argument validation
-- **Cross-client MCP compatibility**: proper stdio framing, JSON-RPC handling, `structuredContent` support
-- **Deterministic outputs**: checksums, metrics, stable response shape
-- **Operational visibility**: built-in `health_check` diagnostics
-- **Practical lifecycle tools**: list, inspect, and clean old generated outputs
+- ✅ **Primary mode**: AI retrieval (`search_code`, `read_file`, `get_context_pack`)
+- ✅ **Optional mode**: export full repo (`render_repo`, `get_cxml`)
+- ✅ **Structured MCP responses** for tool chaining across MCP-compatible clients
+- ✅ **Safety defaults**: bounded reads, limits, binary/large-file handling
 
 ## Install
 
@@ -21,7 +17,7 @@ This server turns any repo (local or remote) into LLM-friendly artifacts:
 npx -y @dschauhan08/easycopy-mcp
 ```
 
-Or global:
+or globally:
 
 ```bash
 npm i -g @dschauhan08/easycopy-mcp
@@ -44,102 +40,131 @@ easycopy-mcp
 }
 ```
 
-This works with MCP-compatible clients across major ecosystems (Claude Desktop-compatible clients, Cursor-compatible clients, and other MCP SDK-based tooling).
+## Recommended AI workflow
+
+1. `index_repo` – scan and cache repository metadata
+2. `search_code` – find relevant files/lines by query
+3. `read_file` / `read_many` – fetch exact context only
+4. `get_context_pack` – create a compact, prompt-ready bundle
+
+Use `render_repo` only when you explicitly want a full static export.
+
+---
 
 ## Tools
 
-### `render_repo`
+### Retrieval-first tools (default)
 
-Render a repository into a single HTML output and optionally include inline HTML/CXML in the result.
+### `index_repo`
+Build or refresh a local retrieval index.
+
+Inputs:
+- `repo` (required, local path)
+- `refresh` (optional)
+- `max_file_bytes` (optional)
+
+### `search_code`
+Search code/text with optional regex and glob filtering.
 
 Inputs:
 - `repo` (required)
-- `out_path` (optional)
-- `output_dir` (optional)
-- `output_prefix` (optional)
-- `max_bytes` (optional)
-- `branch` / `tag` / `commit` (optional, mutually exclusive)
-- `no_progress` (optional)
-- `include_inline_html` (optional)
-- `return_inline` (legacy alias, optional)
-- `inline_limit_bytes` (optional)
-- `include_cxml` (optional)
-- `include_output_excerpt` (optional)
-- `timeout_ms` (optional)
-
-Returns:
-- `structuredContent` with output path, checksums, metrics, binary source/version, stderr/stdout tails
-- optional `inline_html`, `output_excerpt`, and `cxml`
-
-### `get_cxml`
-
-Generate output and extract CXML only.
-
-Inputs:
-- `repo` (required)
-- `max_bytes`, `branch`, `tag`, `commit`, `no_progress`, `timeout_ms` (optional)
-
-Returns:
-- `structuredContent` with `cxml`, checksum, render metrics, runtime details
-
-### `health_check`
-
-Runtime and binary diagnostics.
-
-Inputs:
-- `resolve_binary` (optional, default `true`)
-
-Returns:
-- node/runtime info, platform, env hints, cache path, resolved binary details
-
-### `list_outputs`
-
-List generated HTML outputs sorted by newest first.
-
-Inputs:
-- `directory` (optional)
-- `prefix` (optional)
+- `query` (required)
+- `regex` (optional)
+- `case_sensitive` (optional)
+- `include_glob` (optional, e.g. `src/**/*.ts`)
 - `limit` (optional)
 
-### `read_output`
-
-Read excerpt plus checksum from an existing generated output file.
+### `list_files`
+List files with size/text metadata.
 
 Inputs:
+- `repo` (required)
+- `include_glob`, `limit` (optional)
+
+### `read_file`
+Read one file with bounded line window.
+
+Inputs:
+- `repo` (required)
 - `path` (required)
-- `max_chars` (optional)
+- `start_line`, `end_line`, `max_chars` (optional)
+
+### `read_many`
+Read many files in one call with bounded excerpts.
+
+Inputs:
+- `repo` (required)
+- `paths` (required)
+- `max_chars_per_file` (optional)
+
+### `repo_map`
+Compact structural map + key files.
+
+Inputs:
+- `repo` (required)
+- `depth`, `max_entries` (optional)
+
+### `stats`
+Repo-level counts and extension distribution.
+
+Inputs:
+- `repo` (required)
+
+### `get_context_pack`
+Search + select + read top files into an LLM-ready pack.
+
+Inputs:
+- `repo` (required)
+- `query` (required)
+- `limit_files`, `max_chars_per_file` (optional)
+- same search flags as `search_code`
+
+---
+
+### Export tools (optional)
+
+### `render_repo`
+Generate full HTML output using `easycopy`.
+
+### `get_cxml`
+Generate and extract full CXML from `easycopy` output.
+
+---
+
+### Diagnostics + output lifecycle
+
+### `health_check`
+Runtime diagnostics and binary resolution.
+
+### `list_outputs`
+List generated output HTML files.
+
+### `read_output`
+Read excerpt from generated HTML output.
 
 ### `cleanup_outputs`
+Clean old output files (`dry_run: true` by default).
 
-Delete old generated outputs while keeping recent ones.
+## Why this is safer for LLM usage
 
-Inputs:
-- `directory` (optional)
-- `prefix` (optional)
-- `keep_latest` (optional)
-- `dry_run` (optional, default `true`)
-
-## Safety and reliability notes
-
-- Commands run with timeouts and typed argument checks
-- Archive extraction validates platform/tool availability
-- Temporary extraction directories are cleaned up
-- No destructive repo actions; this server only calls `easycopy`
-- Output management tools default to safe behavior (`dry_run: true`)
+- Bounded reads and limits by default
+- Explicit argument validation
+- Binary and oversized file handling in retrieval flow
+- No destructive repo actions
+- Optional export path kept separate from retrieval path
 
 ## Environment variables
 
-- `EASYCOPY_PATH`: explicit easycopy binary path
-- `EASYCOPY_VERSION_TAG`: release tag to fetch (`latest` default)
-- `EASYCOPY_RELEASE_OWNER`: GitHub owner override (default `DsChauhan08`)
-- `EASYCOPY_RELEASE_REPO`: GitHub repo override (default `easycopy`)
-- `EASYCOPY_MCP_CACHE_DIR`: custom binary cache directory
-- `EASYCOPY_INLINE_LIMIT_BYTES`: default inline HTML cap
-- `EASYCOPY_OUTPUT_DIR`: default output directory for generated HTML
-- `EASYCOPY_OUTPUT_PREFIX`: default output file prefix
-- `GITHUB_TOKEN`: optional token for release API/download resilience
+- `EASYCOPY_PATH` – override easycopy binary path
+- `EASYCOPY_VERSION_TAG` – release tag for binary fetch (`latest` default)
+- `EASYCOPY_RELEASE_OWNER` / `EASYCOPY_RELEASE_REPO` – release source override
+- `EASYCOPY_MCP_CACHE_DIR` – binary cache directory
+- `EASYCOPY_INLINE_LIMIT_BYTES` – inline HTML cap
+- `EASYCOPY_OUTPUT_DIR` – default output directory for exports
+- `EASYCOPY_OUTPUT_PREFIX` – default output prefix for exports
+- `GITHUB_TOKEN` – optional API/download resilience for release fetch
 
-## Local development
+## Local dev
 
 ```bash
 cd mcp-server
@@ -148,11 +173,7 @@ npm run selftest
 npm pack --dry-run
 ```
 
-## Publishing notes
+## Publishing
 
-This package is published by repository workflow on `mcp-v*` tags. npm package page content is sourced from this README automatically during `npm publish`.
-
-```bash
-cd mcp-server
-npm publish --access public
-```
+Publishing is automated in GitHub Actions on tags matching `mcp-v*`.
+The npm package page README is updated automatically from this file at publish time.

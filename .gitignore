@@ -7,3 +7,4 @@ Cargo.lock
 node_modules/
 mcp-server/node_modules/
 mcp-server/.cache/
+.chroma-data/

@@ -1,6 +1,6 @@
 {
   "name": "@dschauhan08/easycopy-mcp",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "MCP server for easycopy that renders repositories to HTML and CXML",
   "license": "BSD-Zero-Clause",
   "type": "module",

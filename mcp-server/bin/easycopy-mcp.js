@@ -23,7 +23,7 @@ import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
 const PROTOCOL_VERSION = "2024-11-05";
-const SERVER_INFO = { name: "easycopy-mcp", version: "0.3.0" };
+const SERVER_INFO = { name: "easycopy-mcp", version: "0.3.2" };
 const ROOT = "easycopy-mcp";
 
 const DEFAULT_RELEASE_OWNER = "DsChauhan08";
@@ -1126,6 +1126,27 @@ async function toolGetContextPack(args) {
       uniquePaths.push(m.path);
     }
     if (uniquePaths.length >= limitFiles) break;
+  }
+
+  if (uniquePaths.length === 0) {
+    const emptyData = {
+      ok: true,
+      mode: "retrieval",
+      tool: "get_context_pack",
+      repo: args.repo,
+      query: args.query,
+      selected_files: [],
+      files: [],
+      search_meta: {
+        regex: args.regex === true,
+        case_sensitive: args.case_sensitive === true,
+        include_glob: args.include_glob || null,
+        total_matches_seen: matches.length,
+      },
+      notice: "No matching files found for query",
+    };
+
+    return makeTextAndStructured(emptyData);
   }
 
   const read = await toolReadMany({

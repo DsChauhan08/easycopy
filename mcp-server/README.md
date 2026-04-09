@@ -11,6 +11,11 @@ This package is designed for LLM workflows where **search + targeted reads** are
 - ✅ **Structured MCP responses** for tool chaining across MCP-compatible clients
 - ✅ **Safety defaults**: bounded reads, limits, binary/large-file handling
 
+For AI workflow, this is helpful because it:
+- avoids full-repo dumps,
+- gives targeted file/line discovery,
+- makes context retrieval faster and smaller for prompts.
+
 ## Install
 
 ```bash
@@ -118,6 +123,9 @@ Inputs:
 - `query` (required)
 - `limit_files`, `max_chars_per_file` (optional)
 - same search flags as `search_code`
+
+Behavior note:
+- if no files match the query, `get_context_pack` returns an **empty pack** (`selected_files: []`, `files: []`) instead of an error.
 
 ---
 

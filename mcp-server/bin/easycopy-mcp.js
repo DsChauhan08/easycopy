@@ -23,7 +23,7 @@ import { pipeline } from "node:stream/promises";
 import { fileURLToPath } from "node:url";
 
 const PROTOCOL_VERSION = "2024-11-05";
-const SERVER_INFO = { name: "easycopy-mcp", version: "0.3.2" };
+const SERVER_INFO = { name: "easycopy-mcp", version: "0.3.3" };
 const ROOT = "easycopy-mcp";
 
 const DEFAULT_RELEASE_OWNER = "DsChauhan08";
@@ -60,6 +60,42 @@ const BINARY_EXTENSIONS = new Set([
   ".mp3", ".mp4", ".mov", ".avi", ".mkv", ".wav", ".ogg", ".flac", ".ttf", ".otf", ".woff", ".woff2", ".so",
   ".dll", ".dylib", ".class", ".jar", ".exe", ".bin", ".wasm",
 ]);
+
+const CODE_PREFERRED_EXTENSIONS = new Set([
+  ".js", ".jsx", ".ts", ".tsx", ".py", ".rs", ".go", ".java", ".kt", ".swift", ".rb", ".php", ".c", ".cc", ".cpp",
+  ".h", ".hpp", ".cs", ".scala", ".sql", ".sh", ".bash", ".zsh", ".yaml", ".yml", ".toml", ".json", ".ini", ".env",
+]);
+
+const DOC_PREFERRED_EXTENSIONS = new Set([".md", ".mdx", ".rst", ".txt", ".adoc"]);
+
+const CONFIG_PREFERRED_FILES = new Set([
+  "package.json", "tsconfig.json", "cargo.toml", "pyproject.toml", "requirements.txt", "go.mod", "dockerfile", "compose.yml",
+  "compose.yaml", "vite.config.ts", "vite.config.js", "next.config.js", "next.config.mjs",
+]);
+
+const TECHNICAL_QUERY_TERMS = [
+  "function", "class", "type", "interface", "import", "export", "dependency", "inject", "middleware", "endpoint", "schema",
+  "model", "bug", "fix", "error", "stack", "trace", "test", "build", "config", "routing", "auth", "database", "query", "performance",
+  "optimization", "refactor", "implementation", "mcp", "json", "typescript", "python", "rust",
+];
+
+const TOO_GENERIC_TECHNICAL_TERMS = ["api", "config", "build", "test", "json", "model"];
+
+const DOCUMENTATION_QUERY_TERMS = [
+  "readme", "docs", "documentation", "guide", "tutorial", "overview", "introduction", "getting started", "install", "installation",
+  "quickstart", "faq", "concepts", "architecture notes",
+];
+
+const CODE_DIR_KEYWORDS = [
+  "/src/", "/app/", "/lib/", "/server/", "/backend/", "/core/", "/api/", "/services/", "/routers/", "/endpoints/", "/models/",
+  "/controllers/", "/packages/", "/cmd/", "/crates/", "/internal/", "/examples/",
+];
+
+const DOC_DIR_KEYWORDS = ["/docs/", "/doc/", "/documentation/"];
+
+const META_DIR_KEYWORDS = ["/.github/", "/.gitlab/"];
+
+const QUERY_META_HINTS = ["workflow", "ci", "pipeline", "release", "issue", "discussion", "template", "github actions", "lint"];
 
 class JsonRpcError extends Error {
   constructor(code, message, data) {
@@ -851,6 +887,108 @@ function makeSearchRegex(query, regex, caseSensitive) {
   return new RegExp(escaped, caseSensitive ? "g" : "gi");
 }
 
+function queryContainsAny(queryLower, terms) {
+  return terms.some((term) => queryLower.includes(term));
+}
+
+function classifyQueryIntent(query) {
+  const q = String(query || "").toLowerCase();
+  const technical = queryContainsAny(q, TECHNICAL_QUERY_TERMS);
+  const docs = queryContainsAny(q, DOCUMENTATION_QUERY_TERMS);
+
+  const words = q.split(/\s+/).filter(Boolean);
+  const hasOnlyGenericTechTerms = words.length > 0 && words.every((w) => TOO_GENERIC_TECHNICAL_TERMS.includes(w));
+  if (hasOnlyGenericTechTerms) {
+    return "mixed";
+  }
+
+  if (technical && !docs) return "technical";
+  if (docs && !technical) return "documentation";
+  return "mixed";
+}
+
+function pathScoreForIntent(path, intent) {
+  const normalized = normalizeRel(path).toLowerCase();
+  const base = basename(normalized);
+  const ext = extname(normalized);
+  const inDocsDir = DOC_DIR_KEYWORDS.some((k) => normalized.includes(k)) || normalized.startsWith("docs/");
+  const inTestsDir = normalized.includes("/test/") || normalized.includes("/tests/");
+  const inSrcDir = CODE_DIR_KEYWORDS.some((k) => normalized.includes(k)) || normalized.startsWith("src/");
+  const inMetaDir = META_DIR_KEYWORDS.some((k) => normalized.includes(k));
+
+  let score = 0;
+
+  if (CONFIG_PREFERRED_FILES.has(base)) score += 2;
+  if (CODE_PREFERRED_EXTENSIONS.has(ext)) score += 3;
+  if (DOC_PREFERRED_EXTENSIONS.has(ext)) score -= 1;
+  if (inSrcDir) score += 1;
+  if (inTestsDir) score -= 1;
+
+  if (intent === "technical") {
+    if (inDocsDir) score -= 4;
+    if (inMetaDir) score -= 4;
+    if (DOC_PREFERRED_EXTENSIONS.has(ext)) score -= 2;
+    if (CODE_PREFERRED_EXTENSIONS.has(ext)) score += 4;
+    if (CONFIG_PREFERRED_FILES.has(base)) score += 2;
+    if (inSrcDir) score += 2;
+    if (inTestsDir) score -= 2;
+  }
+
+  if (intent === "documentation") {
+    if (inDocsDir) score += 4;
+    if (DOC_PREFERRED_EXTENSIONS.has(ext)) score += 3;
+    if (CODE_PREFERRED_EXTENSIONS.has(ext)) score -= 2;
+    if (inMetaDir) score -= 1;
+  }
+
+  return score;
+}
+
+function queryHintsMeta(query) {
+  const q = String(query || "").toLowerCase();
+  return QUERY_META_HINTS.some((hint) => q.includes(hint));
+}
+
+function rankContextPaths(matches, query, limitFiles) {
+  const intent = classifyQueryIntent(query);
+  const allowMetaBoost = queryHintsMeta(query);
+
+  const map = new Map();
+  let sequence = 0;
+  for (const m of matches) {
+    if (!map.has(m.path)) {
+      map.set(m.path, {
+        path: m.path,
+        firstIndex: sequence,
+        hitCount: 0,
+      });
+      sequence += 1;
+    }
+    map.get(m.path).hitCount += 1;
+  }
+
+  const ranked = Array.from(map.values())
+    .map((item) => ({
+      ...item,
+      intentScore: pathScoreForIntent(item.path, intent) + (allowMetaBoost && META_DIR_KEYWORDS.some((k) => normalizeRel(item.path).toLowerCase().includes(k)) ? 3 : 0),
+    }))
+    .sort((a, b) => {
+      if (b.intentScore !== a.intentScore) return b.intentScore - a.intentScore;
+      if (b.hitCount !== a.hitCount) return b.hitCount - a.hitCount;
+      return a.firstIndex - b.firstIndex;
+    });
+
+  return {
+    intent,
+    rankedPaths: ranked.slice(0, limitFiles).map((r) => r.path),
+    rankingDetails: ranked.slice(0, Math.max(limitFiles, 12)).map((r) => ({
+      path: r.path,
+      intent_score: r.intentScore,
+      hit_count: r.hitCount,
+    })),
+  };
+}
+
 async function toolSearchCode(args) {
   validateSearchCodeArgs(args);
 
@@ -1118,15 +1256,8 @@ async function toolGetContextPack(args) {
   });
 
   const matches = search.structuredContent.matches || [];
-  const uniquePaths = [];
-  const seen = new Set();
-  for (const m of matches) {
-    if (!seen.has(m.path)) {
-      seen.add(m.path);
-      uniquePaths.push(m.path);
-    }
-    if (uniquePaths.length >= limitFiles) break;
-  }
+  const ranking = rankContextPaths(matches, args.query, limitFiles);
+  const uniquePaths = ranking.rankedPaths;
 
   if (uniquePaths.length === 0) {
     const emptyData = {
@@ -1135,6 +1266,7 @@ async function toolGetContextPack(args) {
       tool: "get_context_pack",
       repo: args.repo,
       query: args.query,
+      query_intent: ranking.intent,
       selected_files: [],
       files: [],
       search_meta: {
@@ -1142,6 +1274,10 @@ async function toolGetContextPack(args) {
         case_sensitive: args.case_sensitive === true,
         include_glob: args.include_glob || null,
         total_matches_seen: matches.length,
+      },
+      ranking: {
+        intent: ranking.intent,
+        candidates: ranking.rankingDetails,
       },
       notice: "No matching files found for query",
     };
@@ -1161,6 +1297,7 @@ async function toolGetContextPack(args) {
     tool: "get_context_pack",
     repo: args.repo,
     query: args.query,
+    query_intent: ranking.intent,
     selected_files: uniquePaths,
     files: read.structuredContent.files,
     search_meta: {
@@ -1168,6 +1305,10 @@ async function toolGetContextPack(args) {
       case_sensitive: args.case_sensitive === true,
       include_glob: args.include_glob || null,
       total_matches_seen: matches.length,
+    },
+    ranking: {
+      intent: ranking.intent,
+      candidates: ranking.rankingDetails,
     },
   };
 

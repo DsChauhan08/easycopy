@@ -126,6 +126,7 @@ Inputs:
 
 Behavior note:
 - if no files match the query, `get_context_pack` returns an **empty pack** (`selected_files: []`, `files: []`) instead of an error.
+- ranking is **intent-aware**: technical queries prioritize code/config files over docs; documentation queries prioritize docs.
 
 ---
 
